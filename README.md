@@ -4,9 +4,7 @@ A minimal, standalone **native Zenoh publishing client** for the JVM,
 intended as a copy-and-hack **starter kit** for building your own
 custom Java Zenoh client.
 
-Extracted from the [almondmalt] `ZenohNativeEmitter` and stripped of
-application-specific hooks (org.json, ASTERIX/CoT format code, servlet
-plumbing) so you get one small class you can actually read:
+This was extracted from another project to distill the Zenoh Java Native Client so you get one small pure Java codebase you can easily leverage in your own Java projects:
 
 * [`ZenohClient.java`](src/main/java/io/mdudel/zenoh/ZenohClient.java) —
   session + publisher lifecycle, TLS/mTLS config, org-prefix key
@@ -229,25 +227,11 @@ the [upstream zenoh-java repo](https://github.com/eclipse-zenoh/zenoh-java).
 
 ## License
 
-Your call — no license file is included by default. Note that
+No license file is included by default. Note that
 `vendor/repo/io/zenoh/zenoh-java-1.9.0.jar` is Eclipse Zenoh,
 distributed under the Apache License 2.0 / EPL-2.0. Kotlin stdlib is
 Apache 2.0.
 
-## Origin
+Use at your own risk.
 
-Distilled from the almondmalt (USAREUR G6 MCSD radar/web) project's
-`ZenohNativeEmitter`, which grew organically alongside real deployments
-against the EFDI Zenoh fabric. Notable design choices carried over:
 
-* **Explicit `mode: "client"`** when an endpoint is set — otherwise
-  Zenoh spends ~5 s on multicast peer discovery before giving up.
-* **Single JSON block for TLS** — Zenoh 1.x rejects piecemeal
-  `transport/link/tls/*` inserts once mTLS is involved.
-* **Loud warnings** for the two silent-failure patterns
-  (`tcp/` + certs, `tls/` without mTLS material) that cost the most
-  hours in production incident triage.
-* **Per-subkey publisher cache** so long-running publishers don't
-  re-declare on every `put()`.
-
-[almondmalt]: internal.
