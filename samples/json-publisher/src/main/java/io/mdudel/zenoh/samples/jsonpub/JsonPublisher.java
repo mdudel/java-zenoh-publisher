@@ -1,3 +1,5 @@
+package io.mdudel.zenoh.samples.jsonpub;
+
 import io.mdudel.zenoh.ZenohClient;
 
 import java.nio.charset.StandardCharsets;
@@ -21,9 +23,13 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>Run:</p>
  * <pre>
- * mvn -q package
- * javac -cp target/java-zenoh-publisher-0.1.0-fat.jar samples/JsonPublisher.java -d /tmp/samples-out
- * java  -cp target/java-zenoh-publisher-0.1.0-fat.jar:/tmp/samples-out JsonPublisher
+ * # from the repo root, install the starter into ~/.m2 once:
+ * mvn -f pom.xml install
+ *
+ * # then build and run this sample:
+ * cd samples/json-publisher
+ * mvn package
+ * java -jar target/json-publisher-0.1.0-fat.jar
  * </pre>
  */
 public final class JsonPublisher {

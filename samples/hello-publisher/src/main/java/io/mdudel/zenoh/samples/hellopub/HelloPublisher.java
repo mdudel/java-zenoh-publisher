@@ -1,3 +1,5 @@
+package io.mdudel.zenoh.samples.hellopub;
+
 import io.mdudel.zenoh.ZenohClient;
 
 import java.nio.charset.StandardCharsets;
@@ -11,16 +13,19 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>Run it:</p>
  * <pre>
- * # from the repo root
- * mvn -q package
- * javac -cp target/java-zenoh-publisher-0.1.0-fat.jar samples/HelloPublisher.java -d /tmp/samples-out
- * java  -cp target/java-zenoh-publisher-0.1.0-fat.jar:/tmp/samples-out HelloPublisher
+ * # from the repo root, install the starter into ~/.m2 once:
+ * mvn -f pom.xml install
+ *
+ * # then build and run this sample:
+ * cd samples/hello-publisher
+ * mvn package
+ * java -jar target/hello-publisher-0.1.0-fat.jar
  * </pre>
  *
- * <p>Point at your own router with a first arg:</p>
+ * <p>Point at your own router with two positional args
+ * ({@code endpoint} then {@code keyExpr}):</p>
  * <pre>
- * java  -cp target/java-zenoh-publisher-0.1.0-fat.jar:/tmp/samples-out \
- *       HelloPublisher tcp/router.local:7447
+ * java -jar target/hello-publisher-0.1.0-fat.jar tcp/router.local:7447 my/key
  * </pre>
  *
  * <p>Verify on the subscriber side (any Zenoh subscriber works, e.g.

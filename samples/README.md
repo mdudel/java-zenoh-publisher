@@ -1,65 +1,80 @@
 # samples/
 
-Copy-paste-ready examples that use the `ZenohClient` starter kit.
-Each file is a single Java class with a `main()` — no build tool
-required beyond having the fat jar on the classpath.
+Independently buildable examples that use the `ZenohClient` starter
+kit. Each subfolder is a complete Maven project: `cd` into it,
+`mvn package`, and you have a runnable fat jar.
 
-| Sample                      | What it shows                                              |
-|-----------------------------|------------------------------------------------------------|
-| `HelloPublisher.java`       | Absolute minimum: connect, publish one message, close.     |
-| `HelloSubscriber.java`      | Companion subscriber (writes to `System.out`).             |
-| `JsonPublisher.java`        | Structured JSON payloads + per-subkey publisher cache.     |
-| `MtlsPublisher.java`        | TLS + mutual authentication (client cert + key).           |
-| `CotStreamingPublisher.java`| Continuous streaming from a background thread. Configurable TTL, rate, and number of simulated tracks moving on elliptical paths. Emits small CoT XML events. |
+| Sample                    | What it shows                                              |
+|---------------------------|------------------------------------------------------------|
+| [`hello-publisher/`](hello-publisher/)             | Absolute minimum: connect, publish one message, close. |
+| [`hello-subscriber/`](hello-subscriber/)           | Companion subscriber that prints payloads to stdout. |
+| [`json-publisher/`](json-publisher/)               | Structured JSON payloads + per-subkey publisher cache. |
+| [`mtls-publisher/`](mtls-publisher/)               | TLS + mutual authentication (client cert + key). |
+| [`cot-streaming-publisher/`](cot-streaming-publisher/) | Background-thread streaming, configurable TTL / rate / tracks, elliptical paths, small CoT XML payloads. |
+
+## One-time setup
+
+Every sample depends on the parent `io.mdudel:java-zenoh-publisher`
+artifact. Install it into your local `~/.m2/repository` once, from
+the repo root:
+
+```bash
+mvn -f pom.xml install
+```
+
+That's a full build + test + install (~30s). You only need to redo
+it when the starter kit itself changes.
+
+## Building a sample
+
+```bash
+cd samples/<sample-name>
+mvn package
+```
+
+Produces `target/<sample-name>-0.1.0-fat.jar`, a ~30 MB self-contained
+fat jar including the native Zenoh libraries and everything else the
+sample needs.
+
+## Running a sample
+
+```bash
+java -jar target/<sample-name>-0.1.0-fat.jar [flags...]
+```
+
+Each sample's own `README.md` documents its flags and gives an
+end-to-end demo. The class-level Javadoc at the top of every
+`.java` source file has the same recipe.
 
 ## Prerequisites
 
 - **JDK 17+** (`java -version`)
-- The starter's fat jar. Build it once from the repo root:
+- **Maven 3.8+** (`mvn -v`)
+- A **Zenoh router** to talk to. The samples default to
+  `tcp/localhost:7447`. Easiest way to spin one up locally:
   ```bash
-  mvn -q clean package
-  # → target/java-zenoh-publisher-0.1.0-fat.jar
-  ```
-- A **Zenoh router** for the samples to connect to. Easiest path:
-  ```bash
-  # docker (needs docker)
   docker run --rm -p 7447:7447 -p 8000:8000 eclipse/zenoh:1.9.0
-  # or native binary from https://github.com/eclipse-zenoh/zenoh/releases
   ```
+  Or grab a native binary from
+  https://github.com/eclipse-zenoh/zenoh/releases.
 
-## Running a sample
+## End-to-end demo
 
-Every sample compiles the same way. Example with `HelloPublisher`:
-
-```bash
-# from the repo root
-mkdir -p /tmp/samples-out
-
-javac -cp target/java-zenoh-publisher-0.1.0-fat.jar \
-      samples/HelloPublisher.java \
-      -d /tmp/samples-out
-
-java  -cp target/java-zenoh-publisher-0.1.0-fat.jar:/tmp/samples-out \
-      HelloPublisher
-```
-
-On Windows, use `;` instead of `:` as the classpath separator.
-
-### End-to-end demo
-
-Two shells:
+Three shells, one of each pair of samples:
 
 ```bash
-# shell 1 — start a zenoh router
+# shell 1 - router
 docker run --rm -p 7447:7447 eclipse/zenoh:1.9.0
 
-# shell 2 — start the subscriber
-javac -cp target/java-zenoh-publisher-0.1.0-fat.jar samples/HelloSubscriber.java -d /tmp/samples-out
-java  -cp target/java-zenoh-publisher-0.1.0-fat.jar:/tmp/samples-out HelloSubscriber
+# shell 2 - subscriber (Ctrl-C to stop)
+cd samples/hello-subscriber
+mvn -q package
+java -jar target/hello-subscriber-0.1.0-fat.jar
 
-# shell 3 — fire the publisher a couple of times
-javac -cp target/java-zenoh-publisher-0.1.0-fat.jar samples/HelloPublisher.java -d /tmp/samples-out
-java  -cp target/java-zenoh-publisher-0.1.0-fat.jar:/tmp/samples-out HelloPublisher
+# shell 3 - publisher (fire it as many times as you like)
+cd samples/hello-publisher
+mvn -q package
+java -jar target/hello-publisher-0.1.0-fat.jar
 ```
 
 The subscriber should print:
@@ -69,21 +84,30 @@ The subscriber should print:
 [HelloSubscriber] demo/greeting -> hello, zenoh from java!
 ```
 
-## Args
+## Layout of a sample
 
-All samples accept `endpoint` and `keyExpr` as optional positional args
-(defaults `tcp/localhost:7447` and a sensible per-sample key). Read the
-Javadoc at the top of each file for the full arg list.
+Every sample follows the same shape:
 
-## Why the samples don't use a build tool
+```
+samples/<sample-name>/
+  pom.xml                                        Maven build, shade fat-jar
+  README.md                                      what it shows + how to run
+  src/main/java/io/mdudel/zenoh/samples/…/       one Java class
+```
 
-Deliberate. The point is that once you have the fat jar, adding Zenoh
-to a random Java project is just:
+Package roots are chosen per-sample under `io.mdudel.zenoh.samples`
+so nothing collides on the classpath if you drop several sample jars
+into the same directory.
 
-1. Put the fat jar on your classpath.
-2. `import io.mdudel.zenoh.ZenohClient;`
-3. Build a client and call `.start()` / `.publish()` / `.stop()`.
+## Adding your own sample
 
-If you want a Maven / Gradle setup instead, the parent repo's `pom.xml`
-is your reference — copy the `<dependency>`, `<repositories>`, and
-(optionally) `<build><plugins>` blocks into your own project.
+1. Copy an existing sample folder as a template.
+2. Rename the folder, `<artifactId>`, and `<main.class>` in
+   `pom.xml`.
+3. Move your `.java` file(s) into
+   `src/main/java/io/mdudel/zenoh/samples/<yourpkg>/`.
+4. `mvn package` from your sample folder.
+
+No changes needed to the parent `pom.xml` - samples are deliberately
+not part of the reactor build so each one stays self-contained and
+independently understandable.

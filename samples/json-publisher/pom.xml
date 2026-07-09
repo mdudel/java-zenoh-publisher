@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>io.mdudel.zenoh.samples</groupId>
+  <artifactId>json-publisher</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <name>json-publisher</name>
+  <description>Structured JSON publisher sample using per-subkey routing.</description>
+
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <main.class>io.mdudel.zenoh.samples.jsonpub.JsonPublisher</main.class>
+  </properties>
+
+  <dependencies>
+    <!-- The starter kit. Install it first from the repo root:
+             mvn -f ../../pom.xml install
+         Or point <version> at whatever you have in your local ~/.m2/repository. -->
+    <dependency>
+      <groupId>io.mdudel</groupId>
+      <artifactId>java-zenoh-publisher</artifactId>
+      <version>0.1.0</version>
+    </dependency>
+
+    <!-- zenoh-java + kotlin-stdlib are shaded INTO the parent's fat jar,
+         which means the parent's installed `dependency-reduced-pom.xml`
+         (written by maven-shade-plugin) drops them from the transitive
+         graph. Re-declare them here so `mvn package` on this sample
+         still bundles them in its own fat jar. Both are picked up from
+         ../../vendor/repo, no Maven Central needed. -->
+    <dependency>
+      <groupId>io.zenoh</groupId>
+      <artifactId>zenoh-java</artifactId>
+      <version>1.9.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlin</groupId>
+      <artifactId>kotlin-stdlib-jdk8</artifactId>
+      <version>1.9.10</version>
+      <exclusions>
+        <exclusion>
+          <groupId>org.jetbrains</groupId>
+          <artifactId>annotations</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlin</groupId>
+      <artifactId>kotlin-stdlib</artifactId>
+      <version>1.9.10</version>
+      <exclusions>
+        <exclusion>
+          <groupId>org.jetbrains</groupId>
+          <artifactId>annotations</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlin</groupId>
+      <artifactId>kotlin-stdlib-common</artifactId>
+      <version>1.9.10</version>
+    </dependency>
+  </dependencies>
+
+  <repositories>
+    <!-- Fallback lookup for the vendored Zenoh + Kotlin jars, transitively
+         pulled in through java-zenoh-publisher. Path is relative to this
+         sample's pom.xml, not the reactor root, so it Just Works whether
+         you build from here or from the top-level. -->
+    <repository>
+      <id>local-vendor</id>
+      <url>file://${project.basedir}/../../vendor/repo</url>
+      <releases><enabled>true</enabled><checksumPolicy>ignore</checksumPolicy></releases>
+      <snapshots><enabled>false</enabled></snapshots>
+    </repository>
+    <repository>
+      <id>central</id>
+      <url>https://repo.maven.apache.org/maven2</url>
+    </repository>
+  </repositories>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <source>17</source>
+          <target>17</target>
+        </configuration>
+      </plugin>
+
+      <!-- Shade the fat jar so `java -jar target/<artifact>-<ver>-fat.jar`
+           Just Works without a classpath dance. Bundles the whole
+           java-zenoh-publisher + zenoh-java + kotlin-stdlib chain
+           (~30 MB output; that's the price of the bundled native libs). -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.5.1</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>${main.class}</mainClass>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+              <finalName>${project.artifactId}-${project.version}-fat</finalName>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

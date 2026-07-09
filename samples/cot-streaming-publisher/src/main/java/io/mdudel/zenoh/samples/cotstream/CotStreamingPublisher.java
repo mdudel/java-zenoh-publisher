@@ -1,3 +1,5 @@
+package io.mdudel.zenoh.samples.cotstream;
+
 import io.mdudel.zenoh.ZenohClient;
 
 import java.nio.charset.StandardCharsets;
@@ -66,15 +68,18 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <h2>CLI</h2>
  * <pre>
- * mvn -q package
- * javac -cp target/java-zenoh-publisher-0.1.0-fat.jar samples/CotStreamingPublisher.java -d /tmp/samples-out
- * java  -cp target/java-zenoh-publisher-0.1.0-fat.jar:/tmp/samples-out \
- *       CotStreamingPublisher \
- *         --endpoint=tcp/localhost:7447 \
- *         --key=demo/cot \
- *         --tracks=5 \
- *         --rate=2 \
- *         --ttl-seconds=30
+ * # from the repo root, install the starter into ~/.m2 once:
+ * mvn -f pom.xml install
+ *
+ * # then build and run this sample:
+ * cd samples/cot-streaming-publisher
+ * mvn package
+ * java -jar target/cot-streaming-publisher-0.1.0-fat.jar \
+ *       --endpoint=tcp/localhost:7447 \
+ *       --key=demo/cot \
+ *       --tracks=5 \
+ *       --rate=2 \
+ *       --ttl-seconds=30
  * </pre>
  *
  * <p>Flags:</p>

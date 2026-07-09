@@ -203,19 +203,27 @@ Common gotchas (learned the hard way in production):
 ## Repository layout
 
 ```
-pom.xml                                                Maven build (JDK 17, shade fat-jar)
+pom.xml                                                Parent Maven build (JDK 17, shade fat-jar)
 src/main/java/io/mdudel/zenoh/ZenohClient.java         the extracted client
 src/main/java/io/mdudel/zenoh/ZenohPublisherApp.java   CLI starter
-src/test/java/io/mdudel/zenoh/…                        resolveKey() contract tests
-samples/                                               copy-paste starter code
-  HelloPublisher.java                                    minimal 20-line publisher
-  HelloSubscriber.java                                   minimal 60-line subscriber
-  JsonPublisher.java                                     publish structured JSON payloads
-  MtlsPublisher.java                                     TLS + mTLS full example
-  README.md                                              how to compile & run
+src/test/java/io/mdudel/zenoh/...                      resolveKey() contract tests
+samples/                                               independently-buildable examples
+  README.md                                              overview + build recipe
+  hello-publisher/                                       Maven project: minimal publisher
+  hello-subscriber/                                      Maven project: minimal subscriber
+  json-publisher/                                        Maven project: structured JSON payloads
+  mtls-publisher/                                        Maven project: TLS + mTLS
+  cot-streaming-publisher/                               Maven project: streaming CoT with TTL
 vendor/repo/io/zenoh/zenoh-java/1.9.0/                 Zenoh Java fat JAR (~28MB)
-vendor/repo/org/jetbrains/kotlin/…                     Kotlin stdlib jars
+vendor/repo/org/jetbrains/kotlin/...                   Kotlin stdlib jars
 ```
+
+Each sample under `samples/` is its own Maven project with its own
+`pom.xml` and `README.md`, buildable in isolation via `mvn package`.
+Install the parent starter into `~/.m2` once with
+`mvn -f pom.xml install`, then any sample builds and runs
+standalone. See [`samples/README.md`](samples/README.md) for the
+full recipe.
 
 ## Platform support
 
