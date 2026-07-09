@@ -29,8 +29,8 @@ Roadmap for follow-up turns:
 | Turn | Adds |
 |------|------|
 | **A (done)**  | Scaffolding, VarInt, KeyExpr, API surface, tests |
-| **B1 (this)** | Codec primitives (WBuf, RBuf, ZenohId, Extension chain, WhatAmI) + INIT message |
-| **B2**        | OPEN, CLOSE, KEEP_ALIVE transport messages |
+| **B1 (done)** | Codec primitives (WBuf, RBuf, ZenohId, Extension chain, WhatAmI) + INIT message |
+| **B2 (this)** | OPEN, CLOSE, KEEP_ALIVE transport messages |
 | **B3**        | FRAME, network Push, zenoh Put |
 | **C**         | Transport layer: TCP -> TLS/mTLS -> WSS/ws |
 | **D**         | Session state machine + KeepAlive thread + clean shutdown |
@@ -135,6 +135,14 @@ The tests cover:
   Rust source's ASCII wire diagram: header/version/lenWai byte layout,
   WhatAmI 2-bit encoding, ZID-length nibble, cookie framing on InitAck,
   extension chain presence gated by the Z flag.
+- **`OpenTest`** - OpenSyn encode (varint lease + varint initial SN +
+  length-prefixed cookie), OpenAck decode with the T flag toggling
+  seconds-vs-milliseconds unit for the lease, extension chain gated by
+  the Z flag, refusal to decode an OpenSyn-shaped payload as an OpenAck.
+- **`CloseTest`** - all 8 reason codes match the spec, S flag toggles
+  link-vs-session scope, extension chain gated by Z, round-trip.
+- **`KeepAliveTest`** - single-byte encoding when no extensions,
+  Z-flag gating for the extension chain, round-trip.
 
 ## Non-goals (permanent, not "yet")
 
