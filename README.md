@@ -225,6 +225,21 @@ resolve the starter kit directly from `vendor/repo/`, which is
 kept in sync with `src/` by the parent build's `package` phase.
 See [`samples/README.md`](samples/README.md) for the full recipe.
 
+## Sibling module: pure-Java publisher (MVP, in progress)
+
+A parallel implementation under [`pure-java/`](pure-java/) is a
+**pure-Java** publisher for the Zenoh 1.x wire protocol - no JNI,
+no native binaries, zero runtime dependencies beyond the JDK. It
+is being built for environments where the ~28 MB Rust-compiled
+`libzenoh_jni.{so,dll,dylib}` bundled inside `zenoh-java` is a
+blocker (security accreditation without matching source, non-x86_64
+platforms, etc.).
+
+Status today: **MVP scaffolding**. Wire codec primitives (VarInt,
+KeyExpr resolver) are done; session/transport/wire messages come
+in follow-up commits. See [`pure-java/README.md`](pure-java/README.md)
+for the roadmap.
+
 ## Platform support
 
 Bundled native libraries only cover **x86_64**. On ARM / other archs
