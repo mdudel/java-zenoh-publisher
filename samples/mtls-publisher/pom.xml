@@ -78,7 +78,19 @@
     <repository>
       <id>local-vendor</id>
       <url>file://${project.basedir}/../../vendor/repo</url>
-      <releases><enabled>true</enabled><checksumPolicy>ignore</checksumPolicy></releases>
+      <!-- updatePolicy=always is CRITICAL for a local file:// repo whose
+           contents may appear/disappear/change between builds (e.g. after
+           `git pull`). Without it, Maven negative-caches "not found"
+           lookups in ~/.m2/repository/.../_remote.repositories the first
+           time an artifact is missing, and later `mvn package` runs will
+           refuse to re-check even after `git pull` drops the file into
+           place - user has to remember `mvn -U`. Cost of always-check on
+           a file:// URL is a directory stat, so we pay nothing. -->
+      <releases>
+        <enabled>true</enabled>
+        <updatePolicy>always</updatePolicy>
+        <checksumPolicy>ignore</checksumPolicy>
+      </releases>
       <snapshots><enabled>false</enabled></snapshots>
     </repository>
     <repository>

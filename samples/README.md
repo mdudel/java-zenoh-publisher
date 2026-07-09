@@ -31,6 +31,37 @@ parent from the repo root (`mvn package`) to refresh the vendored
 copy - it is auto-copied into `vendor/repo/` as part of the parent
 build's `package` phase.
 
+### Troubleshooting: stale Maven negative cache
+
+If you built a sample **before** the vendored parent jar existed
+(pre-`be13ee8` on any old checkout), Maven negatively-cached the
+lookup in your local `~/.m2/repository` and may keep refusing to
+see the vendored jar even after `git pull`. Symptom:
+
+```
+Failure to find io.mdudel:java-zenoh-publisher:jar:0.1.0 in
+file://.../vendor/repo was cached in the local repository,
+resolution will not be reattempted until the update interval of
+local-vendor has elapsed or updates are forced
+```
+
+The sample poms now set `<updatePolicy>always</updatePolicy>` on
+the `local-vendor` repo so this shouldn't happen going forward.
+If you hit it anyway, force one refresh with `-U`:
+
+```bash
+cd samples/<sample-name>
+mvn -U clean package
+```
+
+Or if `-U` doesn't clear it either, nuke the negative-cache marker
+directly:
+
+```bash
+rm -rf ~/.m2/repository/io/mdudel/java-zenoh-publisher
+mvn clean package
+```
+
 Produces `target/<sample-name>-0.1.0-fat.jar`, a ~30 MB self-contained
 fat jar including the native Zenoh libraries and everything else the
 sample needs.
