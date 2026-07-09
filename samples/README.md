@@ -4,12 +4,13 @@ Copy-paste-ready examples that use the `ZenohClient` starter kit.
 Each file is a single Java class with a `main()` — no build tool
 required beyond having the fat jar on the classpath.
 
-| Sample                    | What it shows                                            |
-|---------------------------|----------------------------------------------------------|
-| `HelloPublisher.java`     | Absolute minimum: connect, publish one message, close.   |
-| `HelloSubscriber.java`    | Companion subscriber (writes to `System.out`).           |
-| `JsonPublisher.java`      | Structured JSON payloads + per-subkey publisher cache.   |
-| `MtlsPublisher.java`      | TLS + mutual authentication (client cert + key).         |
+| Sample                      | What it shows                                              |
+|-----------------------------|------------------------------------------------------------|
+| `HelloPublisher.java`       | Absolute minimum: connect, publish one message, close.     |
+| `HelloSubscriber.java`      | Companion subscriber (writes to `System.out`).             |
+| `JsonPublisher.java`        | Structured JSON payloads + per-subkey publisher cache.     |
+| `MtlsPublisher.java`        | TLS + mutual authentication (client cert + key).           |
+| `CotStreamingPublisher.java`| Continuous streaming from a background thread. Configurable TTL, rate, and number of simulated tracks moving on elliptical paths. Emits small CoT XML events. |
 
 ## Prerequisites
 
