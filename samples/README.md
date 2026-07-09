@@ -10,7 +10,7 @@ kit. Each subfolder is a complete Maven project: `cd` into it,
 | [`hello-subscriber/`](hello-subscriber/)           | Companion subscriber that prints payloads to stdout. |
 | [`json-publisher/`](json-publisher/)               | Structured JSON payloads + per-subkey publisher cache. |
 | [`mtls-publisher/`](mtls-publisher/)               | TLS + mutual authentication (client cert + key). |
-| [`cot-streaming-publisher/`](cot-streaming-publisher/) | Background-thread streaming, configurable TTL / rate / tracks, elliptical paths, small CoT XML payloads. |
+| [`cot-streaming-publisher/`](cot-streaming-publisher/) | Background-thread streaming, configurable TTL / rate / tracks, small CoT XML payloads. |
 
 ## Building a sample
 
