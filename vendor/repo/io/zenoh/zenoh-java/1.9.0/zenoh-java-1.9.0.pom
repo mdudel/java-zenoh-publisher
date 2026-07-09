@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>io.zenoh</groupId>
+  <artifactId>zenoh-java</artifactId>
+  <version>1.9.0</version>
+  <packaging>jar</packaging>
+  <description>Zenoh Java/Kotlin bindings 1.9.0 (vendored, x86_64-only fat JAR with bundled native libs)</description>
+
+  <!--
+       Vendored from the upstream zenoh-java 1.9.0 release.
+       This POM exists so the maven-shade-plugin will treat zenoh-java as a
+       regular compile-scope dependency (it ignores <scope>system</scope> deps
+       by default, which caused NoClassDefFoundError: io/zenoh/handlers/Callback
+       at runtime).
+
+       The transitive Kotlin stdlib dependencies are listed as optional + system
+       scope so they don't try to download from Maven Central in offline /
+       air-gapped builds. The actual stdlib JARs are vendored alongside zenoh
+       in vendor/repo/org/jetbrains/kotlin/.
+  -->
+  <!--
+       Kotlin transitive deps are NOT listed here — they are declared
+       explicitly in the main pom.xml so the missing-from-vendor
+       'org.jetbrains:annotations:13.0' transitive can be excluded
+       cleanly without modifying upstream-style POMs.
+  -->
+  <dependencies>
+  </dependencies>
+</project>
