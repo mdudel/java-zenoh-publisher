@@ -28,8 +28,10 @@ Roadmap for follow-up turns:
 
 | Turn | Adds |
 |------|------|
-| **A (this)**  | Scaffolding, VarInt, KeyExpr, API surface, tests |
-| **B**         | Zenoh wire message codec (Init/Open/DeclarePublisher/Push/Put/KeepAlive/Close) |
+| **A (done)**  | Scaffolding, VarInt, KeyExpr, API surface, tests |
+| **B1 (this)** | Codec primitives (WBuf, RBuf, ZenohId, Extension chain, WhatAmI) + INIT message |
+| **B2**        | OPEN, CLOSE, KEEP_ALIVE transport messages |
+| **B3**        | FRAME, network Push, zenoh Put |
 | **C**         | Transport layer: TCP -> TLS/mTLS -> WSS/ws |
 | **D**         | Session state machine + KeepAlive thread + clean shutdown |
 | **E**         | Wire together `PureJavaZenohPublisher.start()`/`.publish()`, ship a sample project |
@@ -119,6 +121,20 @@ The tests cover:
 - **`KeyExprTest`** - the org-prefix resolver, with the same
   expected values as the JNI publisher's `ZenohClientResolveKeyTest`
   so drift between the two implementations shows up as a test failure.
+- **`WBufRBufTest`** - byte-level primitives (u8, little-endian u16,
+  varints, length-prefixed byte/string), slicing, underflow handling.
+- **`ZenohIdTest`** - length constraints (1..16 bytes), the
+  `encoded_length = actual - 1` nibble convention, random-ZID generation,
+  hex `toString()`.
+- **`ExtensionTest`** - the TLV chain codec: each of the three body
+  encodings (Unit, Z64, ZBuf), the mandatory (M) flag, the more-follows
+  (Z) flag being set on all but the last extension in a chain, the
+  reserved encoding (0b11) being rejected, and the crucial forward
+  compatibility property that a reader can skip unknown extensions.
+- **`InitTest`** - hand-crafted INIT bytes checked against the reference
+  Rust source's ASCII wire diagram: header/version/lenWai byte layout,
+  WhatAmI 2-bit encoding, ZID-length nibble, cookie framing on InitAck,
+  extension chain presence gated by the Z flag.
 
 ## Non-goals (permanent, not "yet")
 
