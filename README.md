@@ -109,8 +109,8 @@ try {
     // simple publish — payload is arbitrary bytes
     client.publish("hello".getBytes(StandardCharsets.UTF_8));
 
-    // per-subkey routing — publishes to demo/example/zenoh-java/track-42
-    client.publish("track-42", payload);
+    // per-subkey routing - publishes to demo/example/zenoh-java/sensor-42
+    client.publish("sensor-42", payload);
 
     // metrics if you need them
     System.out.println("sent=" + client.getSentCount()
@@ -146,7 +146,7 @@ payload format**. That's the extraction point. Common extensions:
   `session.declareQueryable(…)` with a callback.
 - **Structured payloads:** wrap `publish(byte[])` with a serializer
   (JSON, protobuf, Avro). See [`samples/JsonPublisher.java`](samples/JsonPublisher.java)
-  for a JSON example using only `java.util` — no third-party deps.
+  for a JSON example using only the JDK - no third-party deps.
 - **Reconnect logic:** wrap `start()` in a retry loop with backoff.
   Zenoh's own client will try to reconnect at the transport layer, but
   if `Zenoh.open()` itself throws (bad TLS material, router down at
@@ -190,13 +190,13 @@ triggers the TLS config block. Provide any subset of:
 If **both** `--client-cert` and `--client-key` are set, mTLS
 (`enable_mtls=true`) is turned on automatically.
 
-Common gotchas (learned the hard way — see the almondmalt lessons file):
+Common gotchas (learned the hard way in production):
 
 * Cert paths on a `tcp/` endpoint are **silently ignored**. The client
   logs a warning at `start()` if you do this.
-* Most TLS Zenoh routers (including EFDI-style ones) require mTLS and
-  will close the handshake if you point at `tls/` without a client
-  cert + key. The client logs a warning for that too.
+* Most TLS Zenoh routers require mTLS and will close the handshake if
+  you point at `tls/` without a client cert + key. The client logs a
+  warning for that too.
 
 ---
 

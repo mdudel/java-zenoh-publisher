@@ -15,9 +15,10 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Standalone Zenoh native-client publisher wrapper.
  *
- * <p>Extracted from the almondmalt {@code ZenohNativeEmitter} and stripped
- * of application-specific hooks (org.json, Emitter contract, ASTERIX/CoT
- * format code). This is the minimal, dependency-free surface needed to:</p>
+ * <p>Distilled from a larger application's Zenoh emitter and stripped of
+ * application-specific hooks (JSON library, framework interfaces, wire
+ * format decoders). This is the minimal, dependency-free surface needed
+ * to:</p>
  *
  * <ul>
  *   <li>Open a native Zenoh session against a router endpoint.</li>

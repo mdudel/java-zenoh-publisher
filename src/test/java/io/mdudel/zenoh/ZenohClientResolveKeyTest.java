@@ -20,31 +20,31 @@ class ZenohClientResolveKeyTest {
     }
 
     @Test void nullOrgReturnsKeyVerbatim() throws Exception {
-        assertEquals("tracks", resolve(null, "tracks"));
+        assertEquals("events", resolve(null, "events"));
     }
 
     @Test void emptyOrgReturnsKeyVerbatim() throws Exception {
-        assertEquals("tracks", resolve("", "tracks"));
+        assertEquals("events", resolve("", "events"));
     }
 
     @Test void simpleJoin() throws Exception {
-        assertEquals("acme/tracks", resolve("acme", "tracks"));
+        assertEquals("acme/events", resolve("acme", "events"));
     }
 
     @Test void trailingSlashOnOrgTrimmed() throws Exception {
-        assertEquals("acme/tracks", resolve("acme/", "tracks"));
+        assertEquals("acme/events", resolve("acme/", "events"));
     }
 
     @Test void leadingSlashOnKeyTrimmed() throws Exception {
-        assertEquals("acme/tracks", resolve("acme", "/tracks"));
+        assertEquals("acme/events", resolve("acme", "/events"));
     }
 
     @Test void bothSlashesTrimmed() throws Exception {
-        assertEquals("acme/tracks", resolve("acme/", "/tracks"));
+        assertEquals("acme/events", resolve("acme/", "/events"));
     }
 
     @Test void multiSegmentKey() throws Exception {
-        assertEquals("acme/radar/cat062", resolve("acme", "radar/cat062"));
+        assertEquals("acme/sensors/room1", resolve("acme", "sensors/room1"));
     }
 
     @Test void emptyKeyReturnsOrg() throws Exception {
