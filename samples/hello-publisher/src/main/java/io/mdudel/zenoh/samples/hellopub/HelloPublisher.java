@@ -13,10 +13,6 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>Run it:</p>
  * <pre>
- * # from the repo root, install the starter into ~/.m2 once:
- * mvn -f pom.xml install
- *
- * # then build and run this sample:
  * cd samples/hello-publisher
  * mvn package
  * java -jar target/hello-publisher-0.1.0-fat.jar

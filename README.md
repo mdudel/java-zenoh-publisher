@@ -219,11 +219,11 @@ vendor/repo/org/jetbrains/kotlin/...                   Kotlin stdlib jars
 ```
 
 Each sample under `samples/` is its own Maven project with its own
-`pom.xml` and `README.md`, buildable in isolation via `mvn package`.
-Install the parent starter into `~/.m2` once with
-`mvn -f pom.xml install`, then any sample builds and runs
-standalone. See [`samples/README.md`](samples/README.md) for the
-full recipe.
+`pom.xml` and `README.md`, buildable in isolation via `mvn package`
+against a fresh checkout with no setup step required - the samples
+resolve the starter kit directly from `vendor/repo/`, which is
+kept in sync with `src/` by the parent build's `package` phase.
+See [`samples/README.md`](samples/README.md) for the full recipe.
 
 ## Platform support
 

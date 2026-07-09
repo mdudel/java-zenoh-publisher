@@ -12,25 +12,24 @@ kit. Each subfolder is a complete Maven project: `cd` into it,
 | [`mtls-publisher/`](mtls-publisher/)               | TLS + mutual authentication (client cert + key). |
 | [`cot-streaming-publisher/`](cot-streaming-publisher/) | Background-thread streaming, configurable TTL / rate / tracks, elliptical paths, small CoT XML payloads. |
 
-## One-time setup
-
-Every sample depends on the parent `io.mdudel:java-zenoh-publisher`
-artifact. Install it into your local `~/.m2/repository` once, from
-the repo root:
-
-```bash
-mvn -f pom.xml install
-```
-
-That's a full build + test + install (~30s). You only need to redo
-it when the starter kit itself changes.
-
 ## Building a sample
 
 ```bash
 cd samples/<sample-name>
 mvn package
 ```
+
+No setup step required. Every sample resolves the parent
+`io.mdudel:java-zenoh-publisher` artifact directly from
+`vendor/repo/io/mdudel/java-zenoh-publisher/`, which is checked
+into this repo alongside the vendored `zenoh-java` and
+`kotlin-stdlib` jars. `git clone && cd samples/<name> && mvn package`
+works against a fresh checkout with nothing else installed.
+
+If you are actively editing the starter kit itself, rebuild the
+parent from the repo root (`mvn package`) to refresh the vendored
+copy - it is auto-copied into `vendor/repo/` as part of the parent
+build's `package` phase.
 
 Produces `target/<sample-name>-0.1.0-fat.jar`, a ~30 MB self-contained
 fat jar including the native Zenoh libraries and everything else the
@@ -67,13 +66,11 @@ Three shells, one of each pair of samples:
 docker run --rm -p 7447:7447 eclipse/zenoh:1.9.0
 
 # shell 2 - subscriber (Ctrl-C to stop)
-cd samples/hello-subscriber
-mvn -q package
+cd samples/hello-subscriber && mvn -q package
 java -jar target/hello-subscriber-0.1.0-fat.jar
 
 # shell 3 - publisher (fire it as many times as you like)
-cd samples/hello-publisher
-mvn -q package
+cd samples/hello-publisher && mvn -q package
 java -jar target/hello-publisher-0.1.0-fat.jar
 ```
 

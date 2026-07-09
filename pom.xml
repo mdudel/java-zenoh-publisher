@@ -149,6 +149,40 @@
           </execution>
         </executions>
       </plugin>
+
+      <!-- Auto-vendor the built starter jar + dependency-reduced-pom into
+           vendor/repo/io/mdudel/java-zenoh-publisher/${project.version}/ so
+           every sample under samples/ can resolve io.mdudel:java-zenoh-publisher
+           via its <repository id="local-vendor"> block without any manual
+           `mvn install` step. Runs at the end of the `package` phase so a
+           plain `mvn package` at the repo root refreshes the vendored
+           copy; the resulting files are committed to the repo so
+           `git clone && cd samples/<name> && mvn package` works with zero
+           setup on a fresh checkout. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <id>vendor-starter-into-samples-repo</id>
+            <phase>package</phase>
+            <goals><goal>run</goal></goals>
+            <configuration>
+              <target>
+                <mkdir dir="${project.basedir}/vendor/repo/io/mdudel/java-zenoh-publisher/${project.version}"/>
+                <copy file="${project.build.directory}/${project.artifactId}-${project.version}.jar"
+                      tofile="${project.basedir}/vendor/repo/io/mdudel/java-zenoh-publisher/${project.version}/${project.artifactId}-${project.version}.jar"
+                      overwrite="true"/>
+                <copy file="${project.basedir}/dependency-reduced-pom.xml"
+                      tofile="${project.basedir}/vendor/repo/io/mdudel/java-zenoh-publisher/${project.version}/${project.artifactId}-${project.version}.pom"
+                      overwrite="true"/>
+                <echo>Vendored ${project.artifactId}-${project.version} into vendor/repo/ for the samples/ projects.</echo>
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
   </build>
 </project>

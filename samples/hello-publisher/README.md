@@ -7,13 +7,13 @@ closes. About 20 lines of business logic.
 ## Build
 
 ```bash
-# from the repo root, one-time install of the starter kit:
-mvn -f pom.xml install
-
-# then:
 cd samples/hello-publisher
 mvn package
 ```
+
+The build resolves the starter kit directly from the vendored
+`vendor/repo/` alongside the other Zenoh dependencies - no
+top-level install step required.
 
 ## Run
 

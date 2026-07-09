@@ -68,10 +68,6 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <h2>CLI</h2>
  * <pre>
- * # from the repo root, install the starter into ~/.m2 once:
- * mvn -f pom.xml install
- *
- * # then build and run this sample:
  * cd samples/cot-streaming-publisher
  * mvn package
  * java -jar target/cot-streaming-publisher-0.1.0-fat.jar \

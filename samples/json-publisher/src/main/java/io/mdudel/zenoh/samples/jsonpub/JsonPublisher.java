@@ -23,10 +23,6 @@ import java.nio.charset.StandardCharsets;
  *
  * <p>Run:</p>
  * <pre>
- * # from the repo root, install the starter into ~/.m2 once:
- * mvn -f pom.xml install
- *
- * # then build and run this sample:
  * cd samples/json-publisher
  * mvn package
  * java -jar target/json-publisher-0.1.0-fat.jar

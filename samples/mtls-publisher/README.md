@@ -16,13 +16,13 @@ Note the two common footguns (both surface as clear warnings from
 ## Build
 
 ```bash
-# from the repo root, one-time install of the starter kit:
-mvn -f pom.xml install
-
-# then:
 cd samples/mtls-publisher
 mvn package
 ```
+
+The build resolves the starter kit directly from the vendored
+`vendor/repo/` alongside the other Zenoh dependencies - no
+top-level install step required.
 
 ## Run
 
