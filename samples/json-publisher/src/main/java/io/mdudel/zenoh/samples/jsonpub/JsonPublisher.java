@@ -25,7 +25,7 @@ import java.nio.charset.StandardCharsets;
  * <pre>
  * cd samples/json-publisher
  * mvn package
- * java -jar target/json-publisher-0.1.0-fat.jar
+ * java -jar target/json-publisher-0.1.0.jar
  * </pre>
  */
 public final class JsonPublisher {

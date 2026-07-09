@@ -17,7 +17,7 @@ import java.nio.charset.StandardCharsets;
  * <pre>
  * cd samples/mtls-publisher
  * mvn package
- * java -jar target/mtls-publisher-0.1.0-fat.jar \
+ * java -jar target/mtls-publisher-0.1.0.jar \
  *       tls/router.example.com:7447 my/key \
  *       /etc/pki/ca.pem /etc/pki/client.pem /etc/pki/client.key
  * </pre>

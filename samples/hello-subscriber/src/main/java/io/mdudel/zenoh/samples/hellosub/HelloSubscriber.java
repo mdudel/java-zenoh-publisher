@@ -26,7 +26,7 @@ import java.util.concurrent.CountDownLatch;
  * <pre>
  * cd samples/hello-subscriber
  * mvn package
- * java -jar target/hello-subscriber-0.1.0-fat.jar
+ * java -jar target/hello-subscriber-0.1.0.jar
  * # then in another shell, run HelloPublisher
  * </pre>
  *

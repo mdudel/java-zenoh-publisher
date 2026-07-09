@@ -30,13 +30,13 @@ the first run.
 mvn -q clean package
 ```
 
-Produces `target/java-zenoh-publisher-0.1.0-fat.jar` (~30 MB — includes
+Produces `target/java-zenoh-publisher-0.1.0.jar` (~30 MB — includes
 the native Zenoh libraries).
 
 ### 2. Publish something
 
 ```bash
-java -jar target/java-zenoh-publisher-0.1.0-fat.jar \
+java -jar target/java-zenoh-publisher-0.1.0.jar \
     --endpoint=tcp/localhost:7447 \
     --key=demo/example/zenoh-java \
     --rate=1 \

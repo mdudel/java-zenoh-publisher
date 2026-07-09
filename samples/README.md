@@ -62,14 +62,14 @@ rm -rf ~/.m2/repository/io/mdudel/java-zenoh-publisher
 mvn clean package
 ```
 
-Produces `target/<sample-name>-0.1.0-fat.jar`, a ~30 MB self-contained
+Produces `target/<sample-name>-0.1.0.jar`, a ~30 MB self-contained
 fat jar including the native Zenoh libraries and everything else the
 sample needs.
 
 ## Running a sample
 
 ```bash
-java -jar target/<sample-name>-0.1.0-fat.jar [flags...]
+java -jar target/<sample-name>-0.1.0.jar [flags...]
 ```
 
 Each sample's own `README.md` documents its flags and gives an
@@ -98,11 +98,11 @@ docker run --rm -p 7447:7447 eclipse/zenoh:1.9.0
 
 # shell 2 - subscriber (Ctrl-C to stop)
 cd samples/hello-subscriber && mvn -q package
-java -jar target/hello-subscriber-0.1.0-fat.jar
+java -jar target/hello-subscriber-0.1.0.jar
 
 # shell 3 - publisher (fire it as many times as you like)
 cd samples/hello-publisher && mvn -q package
-java -jar target/hello-publisher-0.1.0-fat.jar
+java -jar target/hello-publisher-0.1.0.jar
 ```
 
 The subscriber should print:

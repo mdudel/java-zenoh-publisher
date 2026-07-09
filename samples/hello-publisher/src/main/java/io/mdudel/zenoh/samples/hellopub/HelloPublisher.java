@@ -15,13 +15,13 @@ import java.nio.charset.StandardCharsets;
  * <pre>
  * cd samples/hello-publisher
  * mvn package
- * java -jar target/hello-publisher-0.1.0-fat.jar
+ * java -jar target/hello-publisher-0.1.0.jar
  * </pre>
  *
  * <p>Point at your own router with two positional args
  * ({@code endpoint} then {@code keyExpr}):</p>
  * <pre>
- * java -jar target/hello-publisher-0.1.0-fat.jar tcp/router.local:7447 my/key
+ * java -jar target/hello-publisher-0.1.0.jar tcp/router.local:7447 my/key
  * </pre>
  *
  * <p>Verify on the subscriber side (any Zenoh subscriber works, e.g.

@@ -70,7 +70,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * <pre>
  * cd samples/cot-streaming-publisher
  * mvn package
- * java -jar target/cot-streaming-publisher-0.1.0-fat.jar \
+ * java -jar target/cot-streaming-publisher-0.1.0.jar \
  *       --endpoint=tcp/localhost:7447 \
  *       --key=demo/cot \
  *       --tracks=5 \

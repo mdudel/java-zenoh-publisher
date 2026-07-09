@@ -24,10 +24,10 @@ top-level install step required.
 
 ```bash
 # defaults: tcp/localhost:7447, key demo/cot, 3 tracks, 1 Hz per track, 30 s TTL
-java -jar target/cot-streaming-publisher-0.1.0-fat.jar
+java -jar target/cot-streaming-publisher-0.1.0.jar
 
 # 20 tracks, 5 Hz each, run for 2 minutes:
-java -jar target/cot-streaming-publisher-0.1.0-fat.jar \
+java -jar target/cot-streaming-publisher-0.1.0.jar \
       --endpoint=tcp/router.local:7447 \
       --key=demo/cot \
       --tracks=20 \

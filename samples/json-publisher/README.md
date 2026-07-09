@@ -29,10 +29,10 @@ top-level install step required.
 
 ```bash
 # default: connect to tcp/localhost:7447, publish to demo/sensors/sensor-<0..4>
-java -jar target/json-publisher-0.1.0-fat.jar
+java -jar target/json-publisher-0.1.0.jar
 
 # override endpoint and base key:
-java -jar target/json-publisher-0.1.0-fat.jar tcp/router.local:7447 my/sensors
+java -jar target/json-publisher-0.1.0.jar tcp/router.local:7447 my/sensors
 ```
 
 ## Sample output

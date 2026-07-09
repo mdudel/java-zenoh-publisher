@@ -111,10 +111,17 @@
         </configuration>
       </plugin>
 
-      <!-- Shade the fat jar so `java -jar target/<artifact>-<ver>-fat.jar`
+      <!-- Shade the runnable fat jar so `java -jar target/<artifact>-<ver>.jar`
            Just Works without a classpath dance. Bundles the whole
            java-zenoh-publisher + zenoh-java + kotlin-stdlib chain
-           (~30 MB output; that's the price of the bundled native libs). -->
+           (~30 MB output; that's the price of the bundled native libs).
+
+           <shadedArtifactAttached>false</shadedArtifactAttached> (the
+           default) means the fat jar REPLACES the thin one instead of
+           sitting alongside it. This is deliberate: samples are meant
+           to be run, and having exactly one runnable jar in target/
+           removes the "no main manifest attribute" footgun that
+           happens when a user grabs the thin jar by mistake. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
@@ -140,7 +147,6 @@
                   </excludes>
                 </filter>
               </filters>
-              <finalName>${project.artifactId}-${project.version}-fat</finalName>
             </configuration>
           </execution>
         </executions>

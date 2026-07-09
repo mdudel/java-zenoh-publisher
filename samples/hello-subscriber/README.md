@@ -26,10 +26,10 @@ top-level install step required.
 
 ```bash
 # default: connect to tcp/localhost:7447, subscribe to demo/**
-java -jar target/hello-subscriber-0.1.0-fat.jar
+java -jar target/hello-subscriber-0.1.0.jar
 
 # override endpoint and key expression:
-java -jar target/hello-subscriber-0.1.0-fat.jar tcp/router.local:7447 'my/**'
+java -jar target/hello-subscriber-0.1.0.jar tcp/router.local:7447 'my/**'
 ```
 
 Args are positional: `<endpoint>` then `<keyExpr>`. Both optional.
