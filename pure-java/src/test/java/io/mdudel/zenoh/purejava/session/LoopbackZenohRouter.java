@@ -46,14 +46,14 @@ import java.util.function.Consumer;
  *       inspectable queue.</li>
  * </ul>
  */
-final class LoopbackZenohRouter implements AutoCloseable {
+public final class LoopbackZenohRouter implements AutoCloseable {
 
     /** Overrides used to script server-side behaviour per test. */
-    static final class Behaviour {
-        long   leaseOverrideMs = -1;         // -1 = accept client's proposed lease
-        int    handshakeStallMs = 0;         // artificial delay before InitAck
-        boolean sendGarbageInitAck = false;  // reply with an invalid InitAck
-        Consumer<ClientSession> onOpened;    // extra scripted behaviour once OPEN
+    public static final class Behaviour {
+        public long   leaseOverrideMs = -1;         // -1 = accept client's proposed lease
+        public int    handshakeStallMs = 0;         // artificial delay before InitAck
+        public boolean sendGarbageInitAck = false;  // reply with an invalid InitAck
+        public Consumer<ClientSession> onOpened;    // extra scripted behaviour once OPEN
     }
 
     private final ServerSocket           server;
@@ -64,11 +64,11 @@ final class LoopbackZenohRouter implements AutoCloseable {
     private final AtomicBoolean          closed = new AtomicBoolean(false);
     private final AtomicInteger          cookieSeq = new AtomicInteger(0);
 
-    static LoopbackZenohRouter bind() throws IOException {
+    public static LoopbackZenohRouter bind() throws IOException {
         return new LoopbackZenohRouter(new Behaviour());
     }
 
-    static LoopbackZenohRouter bind(Behaviour b) throws IOException {
+    public static LoopbackZenohRouter bind(Behaviour b) throws IOException {
         return new LoopbackZenohRouter(b);
     }
 
@@ -80,9 +80,9 @@ final class LoopbackZenohRouter implements AutoCloseable {
         this.acceptThread.start();
     }
 
-    int port() { return server.getLocalPort(); }
-    ZenohId serverId() { return serverId; }
-    List<ClientSession> sessions() { return List.copyOf(sessions); }
+    public int port() { return server.getLocalPort(); }
+    public ZenohId serverId() { return serverId; }
+    public List<ClientSession> sessions() { return List.copyOf(sessions); }
 
     @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;
@@ -104,7 +104,7 @@ final class LoopbackZenohRouter implements AutoCloseable {
     }
 
     /** One accepted client connection. */
-    final class ClientSession implements AutoCloseable {
+    public final class ClientSession implements AutoCloseable {
         private final Socket           socket;
         private final AtomicBoolean    csClosed = new AtomicBoolean(false);
         private volatile OutputStream  out;
@@ -112,7 +112,7 @@ final class LoopbackZenohRouter implements AutoCloseable {
         private volatile byte[]        cookie;
 
         /** Every non-handshake batch received from the client, decoded by header id. */
-        final LinkedBlockingQueue<Batch> received = new LinkedBlockingQueue<>();
+        public final LinkedBlockingQueue<Batch> received = new LinkedBlockingQueue<>();
 
         ClientSession(Socket s) { this.socket = s; }
 
@@ -196,7 +196,7 @@ final class LoopbackZenohRouter implements AutoCloseable {
         }
 
         /** Emit a server-driven frame from a test. */
-        void sendRaw(byte[] batch) throws IOException {
+        public void sendRaw(byte[] batch) throws IOException {
             OutputStream os = out;
             if (os == null) throw new IOException("session not open");
             synchronized (os) {
@@ -205,15 +205,15 @@ final class LoopbackZenohRouter implements AutoCloseable {
             }
         }
 
-        void sendKeepAlive() throws IOException {
+        public void sendKeepAlive() throws IOException {
             sendRaw(KeepAlive.EMPTY.encode());
         }
 
-        void sendClose() throws IOException {
+        public void sendClose() throws IOException {
             sendRaw(Close.sessionGeneric().encode());
         }
 
-        ZenohId clientId() { return clientId; }
+        public ZenohId clientId() { return clientId; }
 
         @Override public void close() {
             if (!csClosed.compareAndSet(false, true)) return;
@@ -222,7 +222,7 @@ final class LoopbackZenohRouter implements AutoCloseable {
     }
 
     /** Immutable record of a received batch: (header id nibble, raw bytes). */
-    record Batch(int id, byte[] bytes) {}
+    public record Batch(int id, byte[] bytes) {}
 
     // ---- server-side wire helpers (kept minimal, only what tests need) ---
 

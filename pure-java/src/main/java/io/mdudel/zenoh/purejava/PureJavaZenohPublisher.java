@@ -12,85 +12,89 @@
  */
 package io.mdudel.zenoh.purejava;
 
+import io.mdudel.zenoh.purejava.session.SessionException;
+import io.mdudel.zenoh.purejava.session.SessionState;
+import io.mdudel.zenoh.purejava.session.ZenohSession;
+import io.mdudel.zenoh.purejava.transport.TcpTransport;
+import io.mdudel.zenoh.purejava.transport.TlsConfig;
+import io.mdudel.zenoh.purejava.transport.TlsTransport;
+import io.mdudel.zenoh.purejava.transport.Transport;
+import io.mdudel.zenoh.purejava.transport.WsTransport;
 import io.mdudel.zenoh.purejava.wire.KeyExpr;
 
 import java.io.IOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Pure-Java Zenoh 1.x publisher client. No JNI. No native binaries. Zero
  * runtime dependencies beyond JDK 17.
  *
- * <h2>Status</h2>
- * <p><b>MVP - not yet functional.</b> The API surface (builder, start/stop/
- * publish signatures, getters, config resolution) is stable and mirrors the
- * JNI-backed {@code io.mdudel.zenoh.ZenohClient} in the sibling module so the
- * two are drop-in swappable at a call site. The wire codec, session state
- * machine, and transports are being built in follow-up commits.</p>
+ * <p>Facade over {@link ZenohSession} + the {@link Transport} implementations
+ * ({@link TcpTransport}, {@link TlsTransport}, {@link WsTransport}) that
+ * mirrors the shape of the JNI-backed {@code io.mdudel.zenoh.ZenohClient}
+ * in the sibling module &mdash; switching between the two at a call site
+ * is a one-line change.</p>
  *
- * <p>Calling {@link #start()} or {@link #publish(byte[])} today throws
- * {@link UnsupportedOperationException}. The class exists so the design and
- * integration point can be reviewed before the wire code lands.</p>
- *
- * <h2>Design</h2>
+ * <h2>Endpoint syntax</h2>
+ * <p>The {@code connectEndpoint} builder value accepts either the standard
+ * Zenoh {@code proto/host:port} form (matching the JNI publisher) or a full
+ * URI:</p>
  * <ul>
- *   <li><b>Blocking I/O per session, one reader thread</b> for router
- *       responses / KeepAlive. Publishes serialise on a per-session
- *       {@code synchronized} lock. Fine for the dozens-of-tracks-per-second
- *       scale the sibling {@code ZenohClient} handles; scale by creating
- *       multiple publisher instances.</li>
- *   <li><b>Logging via {@link System.Logger}</b> so this module has zero
- *       logging dependencies. Users bridge to SLF4J / Log4j / Logback by
- *       providing a {@code System.LoggerFinder} on their classpath.</li>
- *   <li><b>API mirror</b> of the JNI-backed {@code ZenohClient} builder,
- *       so choosing between the two implementations is a one-line change.
- *       Same TLS PEM handling, same org-prefix key resolution (see
- *       {@link KeyExpr#resolveKey(String, String)}), same warning logs.</li>
+ *   <li>{@code tcp/host:port}   &rarr; {@link TcpTransport}</li>
+ *   <li>{@code tls/host:port}   &rarr; {@link TlsTransport} (requires TLS builder args)</li>
+ *   <li>{@code ws/host:port}    &rarr; {@link WsTransport} plaintext (routes as {@code ws://host:port})</li>
+ *   <li>{@code wss/host:port}   &rarr; {@link WsTransport} TLS (routes as {@code wss://host:port})</li>
+ *   <li>{@code ws://host:port/path}, {@code wss://host:port/path} &mdash; full URI variants</li>
  * </ul>
  *
- * <h2>Supported transports (planned)</h2>
+ * <h2>Threading</h2>
  * <ul>
- *   <li>{@code tcp/host:port} - plaintext TCP</li>
- *   <li>{@code tls/host:port} - TLS + optional mTLS via
- *       {@link javax.net.ssl.SSLSocket}</li>
- *   <li>{@code ws/host:port}  - plaintext WebSocket via
- *       {@link java.net.http.WebSocket}</li>
- *   <li>{@code wss/host:port} - TLS WebSocket via
- *       {@link java.net.http.WebSocket}</li>
+ *   <li>{@link #start()} single-threaded (call once).</li>
+ *   <li>{@link #publish(byte[])} safe from any thread &mdash; delegates to
+ *       {@link ZenohSession#publish(String, byte[])} which is lock-free
+ *       at the session layer.</li>
+ *   <li>{@link #close()} idempotent from any thread.</li>
  * </ul>
- *
- * <p>Deferred: UDP, QUIC. See {@code README.md} for rationale.</p>
  */
 public final class PureJavaZenohPublisher implements AutoCloseable {
 
     private static final Logger LOG = System.getLogger(PureJavaZenohPublisher.class.getName());
 
     // ----- config (immutable) --------------------------------------------
-    private final String connectEndpoint;
-    private final String keyExpr;
-    private final String org;
-    private final String rootCaCertPath;
-    private final String clientCertPath;
-    private final String clientKeyPath;
+    private final String  connectEndpoint;
+    private final String  keyExpr;
+    private final String  org;
+    private final String  rootCaCertPath;
+    private final String  clientCertPath;
+    private final String  clientKeyPath;
+    private final char[]  keyStorePassword;
     private final boolean verifyHostname;
+    private final long    leaseMs;
 
     // ----- runtime state -------------------------------------------------
-    private volatile boolean active = false;
-    private volatile String lastError;
+    private volatile ZenohSession session;
+    private volatile Transport    transport;
+    private volatile String       lastError;
     private final AtomicLong sentCount  = new AtomicLong(0);
     private final AtomicLong lastSendMs = new AtomicLong(0);
 
     private PureJavaZenohPublisher(Builder b) {
-        this.connectEndpoint = nz(b.connectEndpoint);
-        this.keyExpr         = (b.keyExpr != null && !b.keyExpr.isEmpty())
-                                 ? b.keyExpr : "demo/example/zenoh-java";
-        this.org             = nz(b.org);
-        this.rootCaCertPath  = nz(b.rootCaCertPath);
-        this.clientCertPath  = nz(b.clientCertPath);
-        this.clientKeyPath   = nz(b.clientKeyPath);
-        this.verifyHostname  = b.verifyHostname;
+        this.connectEndpoint  = nz(b.connectEndpoint);
+        this.keyExpr          = (b.keyExpr != null && !b.keyExpr.isEmpty())
+                                    ? b.keyExpr : "demo/example/zenoh-java";
+        this.org              = nz(b.org);
+        this.rootCaCertPath   = nz(b.rootCaCertPath);
+        this.clientCertPath   = nz(b.clientCertPath);
+        this.clientKeyPath    = nz(b.clientKeyPath);
+        this.keyStorePassword = b.keyStorePassword;
+        this.verifyHostname   = b.verifyHostname;
+        this.leaseMs          = b.leaseMs;
     }
 
     private static String nz(String s) { return s == null ? "" : s; }
@@ -100,7 +104,9 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
     public String  getKeyExpr()          { return keyExpr; }
     public String  getOrg()              { return org; }
     public String  getEffectiveKeyExpr() { return KeyExpr.resolveKey(org, keyExpr); }
-    public boolean isActive()            { return active; }
+    public boolean isActive()            {
+        return session != null && session.state() == SessionState.OPEN;
+    }
     public long    getSentCount()        { return sentCount.get(); }
     public long    getLastSendMs()       { return lastSendMs.get(); }
     public String  getLastError()        { return lastError; }
@@ -108,26 +114,47 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
     // ----- lifecycle -----------------------------------------------------
 
     /**
-     * Open the transport, do the Zenoh Init/Open handshake, declare the
-     * base publisher.
-     *
-     * @throws UnsupportedOperationException while the MVP is being built.
+     * Build the transport for {@link #connectEndpoint}, run the four-message
+     * INIT/OPEN handshake, and enter the publish-ready state.
      */
     public void start() throws IOException {
-        if (active) return;
+        if (isActive()) return;
         LOG.log(Level.INFO,
                 "PureJavaZenohPublisher.start() endpoint={0} key={1} effectiveKey={2}"
-                        + " org={3} verifyHostname={4}",
-                connectEndpoint, keyExpr, getEffectiveKeyExpr(), org, verifyHostname);
-        throw new UnsupportedOperationException(
-                "PureJavaZenohPublisher is an MVP; wire protocol not yet"
-                        + " implemented. See README.md for scope and status.");
+                        + " org={3} verifyHostname={4} lease={5}ms",
+                connectEndpoint, keyExpr, getEffectiveKeyExpr(), org,
+                verifyHostname, leaseMs);
+        Transport t;
+        try {
+            t = buildTransport();
+        } catch (RuntimeException | IOException e) {
+            lastError = "transport build failed: " + e.getMessage();
+            throw wrapAsIo(e, lastError);
+        }
+        ZenohSession s = ZenohSession.builder(t)
+                .leaseMs(leaseMs)
+                .autoConnect(true)
+                .build();
+        try {
+            s.open();
+        } catch (SessionException e) {
+            lastError = "session open failed: " + e.getMessage();
+            s.close();
+            t.close();
+            throw new IOException(lastError, e);
+        }
+        this.transport = t;
+        this.session   = s;
     }
 
     /** Stop the session, close the transport. Idempotent. */
     public void stop() {
-        if (!active) return;
-        active = false;
+        ZenohSession s = session;
+        if (s != null) {
+            s.close();
+            session = null;
+        }
+        transport = null;
         LOG.log(Level.INFO, "PureJavaZenohPublisher.stop()");
     }
 
@@ -142,19 +169,119 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
 
     /**
      * Publish to {@code effectiveKeyExpr/subKey} if {@code subKey} is
-     * non-null and non-empty, otherwise to the base key. Matches the
-     * per-subkey routing behaviour of the JNI publisher's per-track
-     * publisher cache.
-     *
-     * @throws UnsupportedOperationException while the MVP is being built.
+     * non-null and non-empty, otherwise to the base key.
      */
-    public synchronized void publish(String subKey, byte[] data) throws IOException {
-        if (!active) {
+    public void publish(String subKey, byte[] data) throws IOException {
+        ZenohSession s = session;
+        if (s == null || s.state() != SessionState.OPEN) {
             throw new IOException("PureJavaZenohPublisher is not started");
         }
-        throw new UnsupportedOperationException(
-                "PureJavaZenohPublisher.publish is not yet implemented"
-                        + " (MVP scaffolding turn). See README.md.");
+        String effective = getEffectiveKeyExpr();
+        String key = (subKey == null || subKey.isEmpty())
+                ? effective
+                : effective + "/" + subKey;
+        try {
+            s.publish(key, data);
+        } catch (SessionException e) {
+            lastError = "publish failed: " + e.getMessage();
+            throw new IOException(lastError, e);
+        }
+        sentCount.incrementAndGet();
+        lastSendMs.set(System.currentTimeMillis());
+    }
+
+    /** Publish a UTF-8 string with the Zenoh string encoding tag. */
+    public void publishString(String subKey, String payload) throws IOException {
+        publish(subKey, payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    // ----- endpoint parsing + transport factory --------------------------
+
+    /**
+     * Parse {@link #connectEndpoint} into a scheme/host/port triple and
+     * return the matching {@link Transport}. Package-private for tests.
+     */
+    Transport buildTransport() throws IOException {
+        if (connectEndpoint.isEmpty()) {
+            throw new IOException("connectEndpoint is required");
+        }
+        String scheme;
+        String host;
+        int    port;
+        String path = "";
+
+        // Two forms accepted:
+        //   1. Zenoh classic: proto/host:port     (no colon after proto)
+        //   2. URI:           proto://host:port[/path]
+        if (connectEndpoint.contains("://")) {
+            URI uri = URI.create(connectEndpoint);
+            scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
+            host   = uri.getHost();
+            port   = uri.getPort();
+            path   = uri.getRawPath() == null ? "" : uri.getRawPath();
+        } else {
+            int slash = connectEndpoint.indexOf('/');
+            if (slash <= 0) {
+                throw new IOException("connectEndpoint must be proto/host:port or a URI: "
+                        + connectEndpoint);
+            }
+            scheme = connectEndpoint.substring(0, slash).toLowerCase();
+            String hostPort = connectEndpoint.substring(slash + 1);
+            int colon = hostPort.indexOf(':');
+            if (colon <= 0 || colon == hostPort.length() - 1) {
+                throw new IOException("connectEndpoint must contain host:port: "
+                        + connectEndpoint);
+            }
+            host = hostPort.substring(0, colon);
+            try { port = Integer.parseInt(hostPort.substring(colon + 1)); }
+            catch (NumberFormatException nfe) {
+                throw new IOException("invalid port in endpoint: " + connectEndpoint);
+            }
+        }
+        if (host == null || host.isEmpty()) {
+            throw new IOException("host missing from endpoint: " + connectEndpoint);
+        }
+        if (port < 1 || port > 65535) {
+            throw new IOException("port out of range in endpoint: " + connectEndpoint);
+        }
+
+        return switch (scheme) {
+            case "tcp" -> new TcpTransport(host, port);
+            case "tls" -> new TlsTransport(host, port, buildTlsConfig());
+            case "ws"  -> new WsTransport(URI.create("ws://" + host + ":" + port + path), null);
+            case "wss" -> new WsTransport(
+                    URI.create("wss://" + host + ":" + port + path), buildTlsConfig());
+            default -> throw new IOException("unsupported endpoint scheme '" + scheme
+                    + "'; expected one of tcp, tls, ws, wss");
+        };
+    }
+
+    private TlsConfig buildTlsConfig() throws IOException {
+        TlsConfig.Builder tb = TlsConfig.builder().verifyHostname(verifyHostname);
+        if (!rootCaCertPath.isEmpty()) {
+            Path p = Paths.get(rootCaCertPath);
+            if (!Files.isReadable(p)) {
+                throw new IOException("rootCaCertPath not readable: " + rootCaCertPath);
+            }
+            tb.trustStore(p, keyStorePassword);
+        } else {
+            tb.trustSystem();
+        }
+        if (!clientCertPath.isEmpty() || !clientKeyPath.isEmpty()) {
+            // Use whichever of the two paths is populated as the keystore.
+            String path = !clientCertPath.isEmpty() ? clientCertPath : clientKeyPath;
+            Path p = Paths.get(path);
+            if (!Files.isReadable(p)) {
+                throw new IOException("client keystore not readable: " + path);
+            }
+            tb.keyStore(p, keyStorePassword, keyStorePassword);
+        }
+        return tb.build();
+    }
+
+    private static IOException wrapAsIo(Throwable e, String message) {
+        if (e instanceof IOException io) return io;
+        return new IOException(message, e);
     }
 
     // ----- builder -------------------------------------------------------
@@ -168,13 +295,15 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
      * site.
      */
     public static final class Builder {
-        private String  connectEndpoint = "";
+        private String  connectEndpoint  = "";
         private String  keyExpr;
-        private String  org             = "";
-        private String  rootCaCertPath  = "";
-        private String  clientCertPath  = "";
-        private String  clientKeyPath   = "";
-        private boolean verifyHostname  = false;
+        private String  org              = "";
+        private String  rootCaCertPath   = "";
+        private String  clientCertPath   = "";
+        private String  clientKeyPath    = "";
+        private char[]  keyStorePassword = "changeit".toCharArray();
+        private boolean verifyHostname   = true;
+        private long    leaseMs          = ZenohSession.DEFAULT_LEASE_MS;
 
         public Builder connectEndpoint(String v) { this.connectEndpoint = v; return this; }
         public Builder keyExpr(String v)         { this.keyExpr         = v; return this; }
@@ -182,34 +311,40 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
         public Builder rootCaCertPath(String v)  { this.rootCaCertPath  = v; return this; }
         public Builder clientCertPath(String v)  { this.clientCertPath  = v; return this; }
         public Builder clientKeyPath(String v)   { this.clientKeyPath   = v; return this; }
+        public Builder keyStorePassword(char[] v){ this.keyStorePassword = v; return this; }
         public Builder verifyHostname(boolean v) { this.verifyHostname  = v; return this; }
+        public Builder leaseMs(long v)           { this.leaseMs         = v; return this; }
 
         public PureJavaZenohPublisher build() { return new PureJavaZenohPublisher(this); }
     }
 
-    // ----- CLI stub ------------------------------------------------------
+    // ----- CLI ----------------------------------------------------------
 
     /**
-     * Placeholder main so {@code java -jar} on the packaged jar prints a
-     * useful status message rather than "no main manifest attribute".
-     * Full CLI will follow the sibling module's {@code ZenohPublisherApp}
-     * shape once the publisher is functional.
+     * CLI: publish one payload and exit. Same defaults as the JNI sibling.
+     *
+     * <p>Usage:</p>
+     * <pre>
+     * java -jar target/java-zenoh-publisher-pure-*.jar
+     * java -jar target/java-zenoh-publisher-pure-*.jar tcp/router:7447 my/key
+     * java -jar target/java-zenoh-publisher-pure-*.jar tcp/router:7447 my/key "hello"
+     * </pre>
      */
-    public static void main(String[] args) {
-        System.out.println("java-zenoh-publisher-pure - pure-Java Zenoh 1.x publisher (MVP)");
-        System.out.println();
-        System.out.println("Status: scaffolding only, wire protocol not yet implemented.");
-        System.out.println("See README.md for the roadmap and current scope.");
-        System.out.println();
-        System.out.println("Effective build:");
-        System.out.println("  JDK        = " + System.getProperty("java.version"));
-        System.out.println("  Class      = " + PureJavaZenohPublisher.class.getName());
-        System.out.println();
-        System.out.println("Try (throws UnsupportedOperationException today):");
-        System.out.println("  PureJavaZenohPublisher.builder()");
-        System.out.println("      .connectEndpoint(\"tcp/localhost:7447\")");
-        System.out.println("      .keyExpr(\"demo/greeting\")");
-        System.out.println("      .build()");
-        System.out.println("      .start();");
+    public static void main(String[] args) throws Exception {
+        String endpoint = args.length > 0 ? args[0] : "tcp/localhost:7447";
+        String key      = args.length > 1 ? args[1] : "demo/greeting";
+        String payload  = args.length > 2 ? args[2] : "hello, zenoh from pure-Java!";
+
+        System.out.println("[pure-java-publisher] endpoint=" + endpoint + " key=" + key);
+        try (PureJavaZenohPublisher pub = PureJavaZenohPublisher.builder()
+                .connectEndpoint(endpoint)
+                .keyExpr(key)
+                .build()) {
+            pub.start();
+            pub.publishString(null, payload);
+            System.out.println("[pure-java-publisher] published " + payload.length()
+                    + " chars to key=" + key + " via " + endpoint
+                    + " (sent=" + pub.getSentCount() + ")");
+        }
     }
 }
