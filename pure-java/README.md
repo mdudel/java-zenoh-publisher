@@ -33,8 +33,8 @@ Roadmap for follow-up turns:
 | **B2 (done)** | OPEN, CLOSE, KEEP_ALIVE transport messages |
 | **B3 (done)** | FRAME transport message + PUSH network carrier + PUT zenoh payload + Encoding + Timestamp |
 | **C1 (done)** | Plain TCP transport with 2-byte LE stream framing + one reader thread per link |
-| **C2 (this)** | TLS + optional mTLS via `javax.net.ssl.SSLSocket`, hostname verification on by default, `TlsConfig` builder |
-| **C3**        | WSS via `java.net.http.WebSocket` (plaintext `ws` freebie) |
+| **C2 (done)** | TLS + optional mTLS via `javax.net.ssl.SSLSocket`, hostname verification on by default, `TlsConfig` builder |
+| **C3 (this)** | WS + WSS via `java.net.http.WebSocket` (JDK stdlib), fragmented-message reassembly, TLS via shared `TlsConfig` |
 | **D**         | Session state machine + KeepAlive thread + clean shutdown |
 | **E**         | Wire together `PureJavaZenohPublisher.start()`/`.publish()`, ship a sample project |
 | **F**         | End-to-end interop verification against a real `zenohd` (needs a pcap capture) |
@@ -172,6 +172,20 @@ The tests cover:
   a frame boundary vs mid-length vs mid-payload each surfacing with
   a distinct message, reassembly across pathological 1-byte-per-`read`
   streams, back-to-back multi-frame streams.
+- **`WsTransportTest`** - loopback WebSocket integration via a small
+  test-only RFC 6455 server (`LoopbackWebSocketServer`, ~250 LOC
+  under `src/test/java/`, still no third-party dep). Covers: binary
+  round-trip, multi-frame in-order delivery, server-side fragmented
+  message reassembly (10 KB payload chunked into 1 KB WebSocket
+  fragments), two concurrent senders serialise on the write lock,
+  server clean-close surfaces as `null`+`isOpen()`-false, unexpected
+  text frame trips the reader-error path, oversized batch rejected
+  at the WS layer, max-sized (65 535 B) batch round-trips, `wss://`
+  round-trip via the same PKCS12 keystores as the TLS tests,
+  invalid scheme/host/port rejected at construction,
+  `wss://` requires a `TlsConfig`, `ws://` rejects a non-null
+  `TlsConfig`, connect-refused surfaces as `TransportException`,
+  send-on-closed rejects, `close()` is idempotent.
 - **`TlsTransportTest`** - loopback `SSLServerSocket` integration:
   round-trip over TLS 1.3, mutual-TLS handshake succeeds with client
   cert presented and server-side `getPeerCertificates()` reports the
