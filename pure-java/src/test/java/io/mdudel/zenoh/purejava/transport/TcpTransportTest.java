@@ -94,7 +94,11 @@ class TcpTransportTest {
         try (TcpTransport t = new TcpTransport("127.0.0.1", refusedPort)) {
             t.setConnectTimeoutMs(500);
             TransportException e = assertThrows(TransportException.class, t::connect);
-            assertTrue(e.getMessage().contains("TCP connect failed"));
+            // Message from AbstractStreamTransport reads "connect failed to tcp/host:port: ..."
+            assertTrue(e.getMessage().contains("connect failed"),
+                    "message was: " + e.getMessage());
+            assertTrue(e.getMessage().contains("tcp/"),
+                    "message should mention tcp/ describe(): " + e.getMessage());
         }
     }
 
