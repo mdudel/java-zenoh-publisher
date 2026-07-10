@@ -8,9 +8,18 @@ Sibling module to the JNI-backed
 expose) the same builder API, so switching between them at a call
 site is a one-line change.
 
-## Status: MVP scaffolding (0.0.1-SNAPSHOT)
+## Status: functional publisher (0.0.1-SNAPSHOT)
 
-**Not yet functional.** This first drop lays down:
+**Working.** As of Turn E, the publisher is end-to-end functional:
+facade &rarr; session (handshake, KEEP_ALIVE, lease watchdog) &rarr;
+transport (TCP / TLS / WS / WSS) &rarr; wire codec. See
+[`../samples/pure-java-simple-publisher/`](../samples/pure-java-simple-publisher/)
+for a runnable minimal example.
+
+_Historical note: earlier snapshots of this file said_ "MVP
+scaffolding, not yet functional" — that's obsolete as of Turn E.
+
+The original scaffolding shipped in Turn A:
 
 - Module skeleton (`pom.xml`, package layout, license)
 - The public `PureJavaZenohPublisher` API surface with builder,
@@ -20,9 +29,9 @@ site is a one-line change.
 - `wire.KeyExpr` - org-prefix key resolver, ported verbatim from
   the JNI publisher so effective keys are byte-identical
 
-Calling `.start()` or `.publish(...)` today throws
-`UnsupportedOperationException`. The class exists so the design can
-be reviewed before the wire code lands.
+As of Turn E, `.start()` opens a real session and `.publish(...)`
+delivers real Zenoh frames to a real router. The Turn A stubs
+are gone.
 
 Roadmap for follow-up turns:
 
@@ -35,8 +44,8 @@ Roadmap for follow-up turns:
 | **C1 (done)** | Plain TCP transport with 2-byte LE stream framing + one reader thread per link |
 | **C2 (done)** | TLS + optional mTLS via `javax.net.ssl.SSLSocket`, hostname verification on by default, `TlsConfig` builder |
 | **C3 (done)** | WS + WSS via `java.net.http.WebSocket` (JDK stdlib), fragmented-message reassembly, TLS via shared `TlsConfig` |
-| **D (this)**  | `ZenohSession` state machine (CREATED→CONNECTING→OPENING→OPEN→CLOSING→CLOSED) + INIT/OPEN handshake ceremony + KEEP_ALIVE scheduler + lease-expiry watchdog + graceful CLOSE emission |
-| **E**         | Wire together `PureJavaZenohPublisher.start()`/`.publish()`, ship a sample project |
+| **D (done)**  | `ZenohSession` state machine (CREATED→CONNECTING→OPENING→OPEN→CLOSING→CLOSED) + INIT/OPEN handshake ceremony + KEEP_ALIVE scheduler + lease-expiry watchdog + graceful CLOSE emission |
+| **E (this)**  | `PureJavaZenohPublisher` wired to `ZenohSession` + endpoint parser (tcp/tls/ws/wss) + runnable CLI + `samples/pure-java-simple-publisher/` |
 | **F**         | End-to-end interop verification against a real `zenohd` (needs a pcap capture) |
 
 ## Why this module exists
@@ -172,6 +181,17 @@ The tests cover:
   a frame boundary vs mid-length vs mid-payload each surfacing with
   a distinct message, reassembly across pathological 1-byte-per-`read`
   streams, back-to-back multi-frame streams.
+- **`PureJavaZenohPublisherTest`** - end-to-end facade tests via the
+  same `LoopbackZenohRouter` (now public for cross-package reuse).
+  16 tests covering: start→publish→stop round-trip with server-side
+  wire assertions, org-prefix applied to effective key, subKey
+  appending under the effective key, publish-before-start /
+  publish-after-close rejected, double-start idempotent, close
+  idempotent, empty/malformed/invalid-port/unsupported-scheme
+  endpoints rejected at start, `buildTransport()` returns the right
+  `Transport` subtype for each of `tcp/`, `ws/`, `ws://...`,
+  `tls/`, and the CLI `main()` publishes to the loopback router
+  end-to-end.
 - **`ZenohSessionTest`** - end-to-end session integration via a
   loopback Zenoh router mock (`LoopbackZenohRouter`, ~330 LOC under
   `src/test/java/`, still no third-party dep). Covers: 4-message
