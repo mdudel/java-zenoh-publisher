@@ -32,8 +32,8 @@ Roadmap for follow-up turns:
 | **B1 (done)** | Codec primitives (WBuf, RBuf, ZenohId, Extension chain, WhatAmI) + INIT message |
 | **B2 (done)** | OPEN, CLOSE, KEEP_ALIVE transport messages |
 | **B3 (done)** | FRAME transport message + PUSH network carrier + PUT zenoh payload + Encoding + Timestamp |
-| **C1 (this)** | Plain TCP transport with 2-byte LE stream framing + one reader thread per link |
-| **C2**        | TLS + optional mTLS via `javax.net.ssl.SSLSocket` |
+| **C1 (done)** | Plain TCP transport with 2-byte LE stream framing + one reader thread per link |
+| **C2 (this)** | TLS + optional mTLS via `javax.net.ssl.SSLSocket`, hostname verification on by default, `TlsConfig` builder |
 | **C3**        | WSS via `java.net.http.WebSocket` (plaintext `ws` freebie) |
 | **D**         | Session state machine + KeepAlive thread + clean shutdown |
 | **E**         | Wire together `PureJavaZenohPublisher.start()`/`.publish()`, ship a sample project |
@@ -172,6 +172,20 @@ The tests cover:
   a frame boundary vs mid-length vs mid-payload each surfacing with
   a distinct message, reassembly across pathological 1-byte-per-`read`
   streams, back-to-back multi-frame streams.
+- **`TlsTransportTest`** - loopback `SSLServerSocket` integration:
+  round-trip over TLS 1.3, mutual-TLS handshake succeeds with client
+  cert presented and server-side `getPeerCertificates()` reports the
+  right CN, mutual-TLS fails when the client omits its keystore
+  (pinned to TLSv1.2 so the failure lands at handshake time rather
+  than post-handshake auth), unknown server cert rejected by an
+  empty trust store, hostname verification failure for a wrong-host
+  connect, hostname verification toggle preserves happy path,
+  TLSv1.2 fallback works when protocol is pinned, oversized batch
+  rejected at TLS layer, invalid port rejected at construction,
+  null TlsConfig rejected. Backed by pre-generated PKCS12 keystores
+  under `src/test/resources/` (`server.p12`, `client.p12`,
+  `server-trust.p12`, `client-trust.p12` — 3650-day self-signed
+  certs, SAN covers dns:localhost + ip:127.0.0.1).
 - **`TcpTransportTest`** - loopback `ServerSocket` integration:
   `connect()`/`send()`/`receive()` round-trip against a real socket
   peer, connect-refused surfaces as `TransportException`, oversized
