@@ -22,6 +22,11 @@ One-time install into your local `~/.m2/repository`:
 mvn -f pure-java/pom.xml install
 ```
 
+> **After a `git pull`**: re-run the above `mvn install` before rebuilding
+> this sample. Otherwise you'll get `cannot find symbol: class X` when
+> the pure-Java module has grown a new public class since your last
+> install — the .m2 jar is invisible and goes stale silently.
+
 That drops `java-zenoh-publisher-pure-0.0.1-SNAPSHOT.jar` into
 your local Maven cache, from which this sample resolves it. Then:
 

@@ -19,6 +19,12 @@ for the publisher):
 mvn -f pure-java/pom.xml install
 ```
 
+> **After a `git pull`**: re-run the above `mvn install` before rebuilding
+> this sample. Otherwise you'll get `cannot find symbol: class
+> PureJavaZenohSubscriber` when the pure-Java module has grown a new
+> public class since your last install — the .m2 jar is invisible and
+> goes stale silently.
+
 Then this sample:
 
 ```bash

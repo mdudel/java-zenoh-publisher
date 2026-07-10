@@ -383,11 +383,18 @@ cd java-zenoh-publisher
 
 ### Install the pure-Java module into your local Maven cache
 
-This is a **one-time** step. Only needed because the pure-Java sample resolves `io.mdudel:java-zenoh-publisher-pure` from `~/.m2/repository`, and there's no public release yet.
+This is a **one-time** step per fresh clone. Only needed because the
+pure-Java sample resolves `io.mdudel:java-zenoh-publisher-pure` from
+`~/.m2/repository`, and there's no public release yet.
 
 ```powershell
 mvn -B -f pure-java\pom.xml install
 ```
+
+> **After any `git pull`**: re-run this install before rebuilding the
+> pure-Java samples. The .m2 jar is invisible and can go stale silently;
+> if a sample fails with `cannot find symbol: class PureJavaZenohSubscriber`
+> (or similar), your .m2 is stale. Rerun the install and try again.
 
 Expect:
 ```
