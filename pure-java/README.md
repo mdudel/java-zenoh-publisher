@@ -30,8 +30,8 @@ Roadmap for follow-up turns:
 |------|------|
 | **A (done)**  | Scaffolding, VarInt, KeyExpr, API surface, tests |
 | **B1 (done)** | Codec primitives (WBuf, RBuf, ZenohId, Extension chain, WhatAmI) + INIT message |
-| **B2 (this)** | OPEN, CLOSE, KEEP_ALIVE transport messages |
-| **B3**        | FRAME, network Push, zenoh Put |
+| **B2 (done)** | OPEN, CLOSE, KEEP_ALIVE transport messages |
+| **B3 (this)** | FRAME transport message + PUSH network carrier + PUT zenoh payload + Encoding + Timestamp |
 | **C**         | Transport layer: TCP -> TLS/mTLS -> WSS/ws |
 | **D**         | Session state machine + KeepAlive thread + clean shutdown |
 | **E**         | Wire together `PureJavaZenohPublisher.start()`/`.publish()`, ship a sample project |
@@ -83,7 +83,7 @@ tradeoffs are wrong for your use case, use the JNI-backed sibling.
 | Constraint | Choice |
 |------------|--------|
 | Threading  | Blocking I/O, one reader thread per session. Publishes serialise on a per-session `synchronized` lock. Scale by creating multiple publisher instances, not by tuning one. |
-| Logging    | `java.lang.System.Logger` (JDK built-in). Users bridge to SLF4J / Log4j / Logback / JUL via a `System.LoggerFinder` on the classpath. |
+| Logging    | `java.lang.System.Logger` (JDK built-in). Users bridge to SLF4J / Log4j / Logback / JUL via a `System.LoggerFinder` on the classpath. See [Bridging logs](#bridging-logs) below. |
 | Runtime deps | **Zero.** JDK 17 stdlib only. Test scope: JUnit 5. |
 | License    | Apache 2.0. Clean-room implementation of the Eclipse Zenoh 1.x public wire protocol; not derived from any Zenoh source code. |
 
@@ -143,6 +143,58 @@ The tests cover:
   link-vs-session scope, extension chain gated by Z, round-trip.
 - **`KeepAliveTest`** - single-byte encoding when no extensions,
   Z-flag gating for the extension chain, round-trip.
+- **`FrameTest`** - transport FRAME container: R flag toggles reliable vs
+  best-effort channel, Z flag gates the extension chain, sn is a varint,
+  payload is opaque bytes carrying serialised network messages, helper
+  `ofPush(sn, reliable, push)` embeds an encoded PUSH verbatim, round-trip
+  including a FRAME > PUSH > PUT nesting.
+- **`PushTest`** - network PUSH carrier: N/M/Z flag combinations, u16 key
+  scope range check, UTF-8 suffix round-trip, standard publisher shape
+  from `ofPut(key, put)` (N=1, M=0, Z=0), rejection of wrong network-message
+  id.
+- **`PutTest`** - zenoh PUT payload: T/E/Z flag combinations, header layout
+  for the MVP bare-bytes shape, timestamp position (before encoding),
+  `Encoding.EMPTY` clears the E flag, round-trip with all three of
+  {timestamp, encoding, unknown-extension} at once, 8 KB payload for varint
+  length boundary coverage.
+- **`EncodingTest`** - Encoding field: bare-id shifts left by 1, S-flag on
+  schema, `EMPTY` encodes as a single zero byte, schema length capped at 255,
+  UTF-8 schemas round-trip exactly.
+- **`TimestampTest`** - HLC timestamp: varint HLC time + length-prefixed
+  ZenohId, NTP epoch offset matches RFC 868 (UNIX epoch = 2208988800 NTP
+  seconds), `Timestamp.now(id)` round-trips through `toInstant()` within
+  nanosecond tolerance.
+
+## Bridging logs
+
+By default the publisher writes to `java.lang.System.Logger`, which the
+JDK backs with `java.util.logging`. To route logs into an application's
+existing SLF4J-based logging stack, add the SLF4J JDK-platform-logging
+bridge to the classpath:
+
+```xml
+<dependency>
+  <groupId>org.slf4j</groupId>
+  <artifactId>slf4j-jdk-platform-logging</artifactId>
+  <version>2.0.13</version>
+</dependency>
+<dependency>
+  <groupId>org.slf4j</groupId>
+  <artifactId>slf4j-simple</artifactId>   <!-- or logback-classic, log4j-slf4j2-impl, ... -->
+  <version>2.0.13</version>
+</dependency>
+```
+
+SLF4J's `slf4j-jdk-platform-logging` registers a
+`java.lang.System.LoggerFinder` service that delegates every
+`System.Logger` call to the SLF4J API, at which point the standard
+SLF4J bindings take over. No code changes are needed on the publisher
+side &mdash; the two `<dependency>` blocks above are the only
+addition, and they stay on the *user's* classpath, not this module's.
+
+This module deliberately does not depend on SLF4J directly, so
+accreditation environments that forbid extra runtime jars can keep
+the default `java.util.logging` backend without touching anything.
 
 ## Non-goals (permanent, not "yet")
 
