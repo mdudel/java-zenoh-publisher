@@ -1,9 +1,10 @@
 # Sample mTLS Smoke Test Steps
 ## Zenoh Router + Java Publishers (Windows)
 
-_A walk-through for validating both the JNI `mtls-publisher` and the
-pure-Java `pure-java-mtls-publisher` samples end-to-end against a
-local `zenohd` v1.7.2 with TLS + mutual client authentication._
+_A walk-through for validating the JNI `mtls-publisher`, the pure-Java
+`pure-java-mtls-publisher`, and the pure-Java `pure-java-mtls-subscriber`
+samples end-to-end against a local `zenohd` v1.7.2 with TLS + mutual
+client authentication._
 
 ---
 
@@ -521,6 +522,104 @@ Same failure modes as the JNI section apply if it doesn't work.
 
 ---
 
+## mTLS with the pure-Java subscriber
+
+Same TLS handshake as Chunks 5 and 6, but for the receiving side. The
+`samples/pure-java-mtls-subscriber/` sample takes the same six positional
+args as the two mTLS publisher samples above, plus one extra optional
+`timeoutSeconds` at the end. Under the hood it uses
+`PureJavaZenohSubscriber` with the same clean-room `PemLoader` +
+`TlsConfig` + `ZenohSession` machinery as the publisher, but on the
+inbound path (DECLARE outbound, FRAME → PUSH → PUT decode inbound).
+
+The subscriber only sees samples if some publisher is publishing on
+a key that matches its subscription. Best flow: leave your
+`pure-java-mtls-publisher` from Chunk 6 handy so you can fire off
+publishes to prove end-to-end delivery.
+
+### Build
+
+```powershell
+cd D:\DEV\PROJECTS\Zenoh\java-zenoh-publisher\samples\pure-java-mtls-subscriber
+mvn -B package
+```
+
+Expect `BUILD SUCCESS` and a jar at
+`target\pure-java-mtls-subscriber-0.1.0.jar` (~135 KB).
+
+### Run (Terminal C)
+
+**Leave `zenohd` running in Terminal A**. Open a new terminal (or reuse
+Terminal C) for the subscriber — it must be running BEFORE the
+publisher fires so it can catch the message:
+
+```powershell
+java -jar target\pure-java-mtls-subscriber-0.1.0.jar `
+    tls/localhost:7447 `
+    demo/mtls/pure `
+    D:\ZENOH\certs\ca.pem `
+    D:\ZENOH\certs\client-cert.pem `
+    D:\ZENOH\certs\client-key.pem `
+    true
+```
+
+Expected startup output:
+```
+[PureMtlsSubscriber] endpoint=tls/localhost:7447 key=demo/mtls/pure ... (Ctrl-C to stop)
+INFO: PureJavaZenohSubscriber.start() endpoint=tls/localhost:7447 ... verifyHostname=true ...
+[PureMtlsSubscriber] session OPEN
+```
+
+And then it waits.
+
+### Fire the publisher (Terminal D)
+
+Open ANOTHER terminal:
+
+```powershell
+cd D:\DEV\PROJECTS\Zenoh\java-zenoh-publisher\samples\pure-java-mtls-publisher
+java -jar target\pure-java-mtls-publisher-0.1.0.jar `
+    tls/localhost:7447 `
+    demo/mtls/pure `
+    D:\ZENOH\certs\ca.pem `
+    D:\ZENOH\certs\client-cert.pem `
+    D:\ZENOH\certs\client-key.pem `
+    true
+```
+
+Within a second, back in the subscriber terminal, you should see:
+
+```
+[PureMtlsSubscriber] demo/mtls/pure -> secure hello from pure-Java
+```
+
+### Confirm `zenohd` sees TWO authenticated sessions
+
+Flip to Terminal A (`zenohd`). Look for TWO distinct
+`Accepted TLS connection` lines, both with `Common Name: client`,
+both landing within the same ~1-second window:
+
+```
+DEBUG ... Accepted TLS connection on 127.0.0.1:7447: 127.0.0.1:xxxxx. Common Name: client.  (subscriber)
+DEBUG ... Accepted TLS connection on 127.0.0.1:7447: 127.0.0.1:yyyyy. Common Name: client.  (publisher)
+```
+
+Two distinct source ports = two distinct sessions. **Both** authenticated
+as `CN=client`. That's the definitive proof of end-to-end pure-Java
+mTLS on both wire directions against production `zenohd`.
+
+### Ctrl-C the subscriber to stop
+
+On shutdown the subscriber prints its final receive count and cleanly
+sends the CLOSE frame:
+
+```
+[PureMtlsSubscriber] shutting down (received=1)
+INFO: PureJavaZenohSubscriber.stop()
+```
+
+---
+
 ## Optional: PKCS12 keystore code path
 
 `PureJavaZenohPublisher` also accepts a **PKCS12** combined keystore for client authentication. This exercises a different code path inside `TlsConfig` (native `KeyStore.getInstance("PKCS12")` load, not the PEM parser). Worth confirming, but not strictly required for the mTLS smoke test.
@@ -577,13 +676,17 @@ Remove-Item -Force D:\ZENOH\zenohd-mtls.json5
 
 ## What this smoke test proves
 
-If both publishers (JNI PEM, pure-Java PEM) successfully connect to `zenohd` under mTLS with `Common Name: client` in the router log, you've validated:
+If ALL three of the JNI publisher, pure-Java publisher, and pure-Java
+subscriber successfully connect to `zenohd` under mTLS with `Common
+Name: client` in the router log, AND the subscriber prints the
+publisher's message on its stdout, you've validated:
 
 - The **CA chain** (custom-generated CA → router cert; CA → client cert)
 - The **router's** TLS + mTLS enforcement configuration
 - The **JNI** publisher's PEM cert loading (Rust `zenoh-java` binding)
 - The **pure-Java** publisher's PEM cert loading (`PemLoader` + `TlsConfig.trustStorePem` + `keyStorePem`, all clean-room JDK stdlib)
+- The **pure-Java** subscriber's inbound wire path (DECLARE outbound, FRAME → PUSH → PUT decode, `Subscription` blocking-queue delivery, `KeyExpr.matches` wildcard routing)
 - Optionally, the **pure-Java** publisher's PKCS12 keystore loading (alternate code path)
-- **Wire-level interoperability** between the pure-Java implementation and production `zenohd` v1.7.2 — the highest-fidelity interop check possible short of a multi-router federation test.
+- **Wire-level interoperability in BOTH DIRECTIONS** between the pure-Java implementation and production `zenohd` v1.7.2 — the highest-fidelity interop check possible short of a multi-router federation test.
 
 The pure-Java module has **zero third-party runtime dependencies**; everything above works with JDK 17+ stdlib only.
