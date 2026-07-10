@@ -16,8 +16,11 @@ import io.mdudel.zenoh.purejava.wire.messages.Frame;
 import io.mdudel.zenoh.purejava.wire.messages.Init;
 import io.mdudel.zenoh.purejava.wire.messages.KeepAlive;
 import io.mdudel.zenoh.purejava.wire.messages.Open;
+import io.mdudel.zenoh.purejava.wire.messages.DeclareSubscriber;
+import io.mdudel.zenoh.purejava.wire.messages.Interest;
 import io.mdudel.zenoh.purejava.wire.messages.Push;
 import io.mdudel.zenoh.purejava.wire.messages.Put;
+import io.mdudel.zenoh.purejava.wire.messages.UndeclareSubscriber;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -240,6 +243,60 @@ public final class LoopbackZenohRouter implements AutoCloseable {
             sendPush(sn, key,
                     utf8Payload.getBytes(java.nio.charset.StandardCharsets.UTF_8),
                     Encoding.of(Encoding.ID_ZENOH_STRING));
+        }
+
+        /**
+         * Send a DECLARE(DeclareSubscriber) carrying an interest_id, mimicking a
+         * router response to an INTEREST message.
+         */
+        public void sendDeclareSubscriber(long sn, long interestId, long subsId, String keyExpr)
+                throws IOException {
+            Declare declare = new Declare(interestId, java.util.List.of(),
+                    Declare.Body.of(DeclareSubscriber.ofKeyExpr(subsId, keyExpr)));
+            Frame frame = new Frame(sn, /* reliable = */ true,
+                    java.util.List.of(), declare.encode());
+            sendRaw(frame.encode());
+        }
+
+        /**
+         * Send a DECLARE(UndeclareSubscriber) carrying an interest_id, mimicking a
+         * router-driven undeclare notification to a Future-mode interest.
+         */
+        public void sendUndeclareSubscriber(long sn, long interestId, long subsId)
+                throws IOException {
+            Declare declare = new Declare(interestId, java.util.List.of(),
+                    Declare.Body.of(UndeclareSubscriber.of(subsId)));
+            Frame frame = new Frame(sn, /* reliable = */ true,
+                    java.util.List.of(), declare.encode());
+            sendRaw(frame.encode());
+        }
+
+        /**
+         * Send a DECLARE with a RAW D_FINAL body carrying an interest_id --
+         * the router's "current-state replay complete" sentinel.
+         */
+        public void sendDeclareFinal(long sn, long interestId) throws IOException {
+            Declare declare = new Declare(interestId, java.util.List.of(),
+                    Declare.Body.ofRaw(new byte[] { 0x1A }));   // D_FINAL sub-id
+            Frame frame = new Frame(sn, /* reliable = */ true,
+                    java.util.List.of(), declare.encode());
+            sendRaw(frame.encode());
+        }
+
+        /** Filter the received queue for FRAME payloads that decode to Interest messages. */
+        public java.util.List<Interest> receivedInterests() {
+            java.util.List<Interest> out = new java.util.ArrayList<>();
+            for (Batch b : received) {
+                if (b.id() != Frame.ID) continue;
+                try {
+                    Frame f = Frame.decode(b.bytes());
+                    byte[] payload = f.payload();
+                    if (payload.length > 0 && (payload[0] & 0x1F) == Interest.ID) {
+                        out.add(Interest.decode(payload));
+                    }
+                } catch (RuntimeException ignored) {}
+            }
+            return out;
         }
 
         /**

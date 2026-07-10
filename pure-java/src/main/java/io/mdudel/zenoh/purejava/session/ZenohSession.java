@@ -15,11 +15,14 @@ import io.mdudel.zenoh.purejava.wire.messages.Declare;
 import io.mdudel.zenoh.purejava.wire.messages.DeclareSubscriber;
 import io.mdudel.zenoh.purejava.wire.messages.Frame;
 import io.mdudel.zenoh.purejava.wire.messages.Init;
+import io.mdudel.zenoh.purejava.wire.messages.Interest;
 import io.mdudel.zenoh.purejava.wire.messages.KeepAlive;
 import io.mdudel.zenoh.purejava.wire.messages.Open;
 import io.mdudel.zenoh.purejava.wire.messages.Push;
 import io.mdudel.zenoh.purejava.wire.messages.Put;
 import io.mdudel.zenoh.purejava.wire.messages.UndeclareSubscriber;
+
+import java.util.function.Consumer;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
@@ -104,8 +107,32 @@ public final class ZenohSession implements AutoCloseable {
     private final AtomicLong                    lastSendNanos = new AtomicLong(0);
     private final AtomicLong                    lastRecvNanos = new AtomicLong(0);
     private final AtomicLong                    subscriberIdSeq = new AtomicLong(1);
+    private final AtomicLong                    interestIdSeq   = new AtomicLong(1);
     private final java.util.concurrent.ConcurrentHashMap<Long, Subscription> subscriptions =
             new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, DiscoveryListener> interests =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Callback invoked once per DECLARE record the router returns in
+     * response to an INTEREST. The record's kind determines which
+     * fields are populated:
+     * <ul>
+     *   <li>DECLARE_SUBSCRIBER → {@link Declare.Body#asDeclareSubscriber()}
+     *       gives the subscriber id + declared KeyExpr</li>
+     *   <li>UNDECLARE_SUBSCRIBER → fired for future-mode interests
+     *       when a peer subscription goes away</li>
+     *   <li>RAW → for DECLARE bodies we don't decode yet (queryable, token,
+     *       keyexpr mappings). The raw bytes are on the Body.</li>
+     * </ul>
+     * {@code isFinal} is true iff this DECLARE carries the interest's
+     * FINAL sentinel, meaning "current-state replay complete" (for
+     * CURRENT / CURRENT_FUTURE modes).
+     */
+    @FunctionalInterface
+    public interface DiscoveryListener {
+        void onDeclare(Declare declare, boolean isFinal);
+    }
 
     private final AtomicBoolean                 closed = new AtomicBoolean(false);
     private volatile ScheduledExecutorService   scheduler;
@@ -287,6 +314,55 @@ public final class ZenohSession implements AutoCloseable {
      */
     public Subscription declareSubscriber(String keyExpr) throws SessionException {
         return declareSubscriber(KeyExpr.of(keyExpr));
+    }
+
+    // ---- topic discovery via INTEREST -------------------------------------
+
+    /**
+     * Send an INTEREST message asking the router to notify us of DECLARE
+     * records matching the given key expression. Returns the interest id;
+     * pass it to {@link #finalInterest(long)} later to stop receiving
+     * updates (only meaningful for Future / CurrentFuture modes).
+     *
+     * <p>The {@code listener} is called on the session reader thread for
+     * every DECLARE the router sends carrying this interest's id, in the
+     * order they arrive. Keep it fast — slow callbacks block session
+     * inbound processing.</p>
+     *
+     * @param mode     Interest lifecycle mode
+     * @param options  OR of {@code Interest.OPT_KEYEXPRS / SUBSCRIBERS /
+     *                 QUERYABLES / TOKENS} bits
+     * @param keyExpr  restrict to this KE, or {@code null} to interest in all
+     * @param listener callback for each matching DECLARE
+     * @return the interest id (use with {@link #finalInterest(long)})
+     */
+    public long declareInterest(Interest.Mode mode, int options, String keyExpr,
+                                DiscoveryListener listener) throws SessionException {
+        Objects.requireNonNull(mode,     "mode");
+        Objects.requireNonNull(listener, "listener");
+        if (state.get() != SessionState.OPEN) {
+            throw new SessionException("declareInterest requires state=OPEN, current=" + state.get());
+        }
+        long id = interestIdSeq.getAndIncrement();
+        interests.put(id, listener);
+        try {
+            Interest interest = new Interest(id, mode, options, 0, keyExpr, java.util.List.of());
+            long sn = outboundSn.getAndIncrement();
+            sendRaw(rawFrameCarrying(sn, interest.encode()));
+            return id;
+        } catch (SessionException se) {
+            interests.remove(id);
+            throw se;
+        }
+    }
+
+    /** Terminate a running Future / CurrentFuture interest. */
+    public void finalInterest(long interestId) throws SessionException {
+        if (interests.remove(interestId) == null) return;
+        if (state.get() != SessionState.OPEN || !transport.isOpen()) return;
+        Interest fin = Interest.finalOf(interestId);
+        long sn = outboundSn.getAndIncrement();
+        sendRaw(rawFrameCarrying(sn, fin.encode()));
     }
 
     /**
@@ -487,38 +563,74 @@ public final class ZenohSession implements AutoCloseable {
             LOG.log(Level.DEBUG, () -> "reader: FRAME decode failed: " + e.getMessage());
             return;
         }
-        if (subscriptions.isEmpty()) return;   // fast path: nobody's listening
+        // NB: no early return on empty subscriptions -- an INTEREST-driven
+        // DiscoveryListener can be interested in inbound DECLAREs even when
+        // no PUSH subscriptions are live.
         byte[] payload = frame.payload();
-        int off = 0;
-        // Payload is a concatenation of self-delimiting network messages.
-        // For the publisher-only period, this was always empty; now we
-        // walk through it. Only PUSH is decoded; unknown/other message
-        // types abort the walk to avoid mis-slicing the buffer.
-        while (off < payload.length) {
-            int msgId = payload[off] & 0x1F;
-            if (msgId != Push.ID) {
-                LOG.log(Level.TRACE, () ->
-                        "reader: inbound network message id 0x" + Integer.toHexString(msgId)
-                                + " not routed (subscriber-side only handles PUSH)");
-                return;
-            }
-            byte[] tail = new byte[payload.length - off];
-            System.arraycopy(payload, off, tail, 0, tail.length);
-            Push push;
-            try {
-                push = Push.decode(tail);
-            } catch (RuntimeException e) {
-                LOG.log(Level.DEBUG, () -> "reader: PUSH decode failed: " + e.getMessage());
-                return;
-            }
-            deliverPush(push);
-            // Push.decode consumes the entire tail; a single FRAME can carry
-            // multiple PUSHes only if the router batches them, and in that
-            // case each is length-delimited by its own varint fields.
-            // For the MVP, one FRAME == one PUSH; break to avoid decoding
-            // the same bytes twice.
+        if (payload.length == 0) return;
+        int msgId = payload[0] & 0x1F;
+        // For the MVP, one FRAME carries one network message. Real routers
+        // sometimes batch multiple in one FRAME; when we grow the codec
+        // to know how to length-slice PUSH, DECLARE, etc. we can loop here.
+        // Today: single-message per FRAME, no length probing needed.
+        switch (msgId) {
+            case Push.ID    -> tryDeliverPush(payload);
+            case Declare.ID -> tryDeliverDeclare(payload);
+            default -> LOG.log(Level.TRACE, () ->
+                    "reader: inbound network message id 0x" + Integer.toHexString(msgId)
+                            + " not routed (subscriber-side handles only PUSH + DECLARE today)");
+        }
+    }
+
+    private void tryDeliverPush(byte[] payload) {
+        Push push;
+        try { push = Push.decode(payload); }
+        catch (RuntimeException e) {
+            LOG.log(Level.DEBUG, () -> "reader: PUSH decode failed: " + e.getMessage());
             return;
         }
+        deliverPush(push);
+    }
+
+    private void tryDeliverDeclare(byte[] payload) {
+        Declare declare;
+        try { declare = Declare.decode(payload); }
+        catch (RuntimeException e) {
+            LOG.log(Level.DEBUG, () -> "reader: DECLARE decode failed: " + e.getMessage());
+            return;
+        }
+        Long interestId = declare.interestId();
+        if (interestId == null) {
+            // Server-driven DECLARE not associated with any of our interests
+            // (e.g. gossip from the router about upstream declarations). Log
+            // and drop; a real discovery use case would want to route these
+            // to a wildcard listener but MVP scope is interest-id-matched only.
+            LOG.log(Level.TRACE, () ->
+                    "reader: DECLARE with no interest_id; dropped (" + declare.body().kind() + ")");
+            return;
+        }
+        DiscoveryListener listener = interests.get(interestId);
+        if (listener == null) {
+            LOG.log(Level.TRACE, () ->
+                    "reader: DECLARE for unknown interest_id " + interestId + "; dropped");
+            return;
+        }
+        // The FINAL sentinel is a DeclareBody whose sub-id is D_FINAL (0x1A).
+        // We surface it via the isFinal flag and remove the interest so the
+        // listener knows the current-state replay is done.
+        boolean isFinal = declare.body().kind() == Declare.Body.BodyKind.RAW
+                && declare.body().rawBytes() != null
+                && declare.body().rawBytes().length >= 1
+                && (declare.body().rawBytes()[0] & 0x1F) == 0x1A;
+        try { listener.onDeclare(declare, isFinal); }
+        catch (RuntimeException re) {
+            LOG.log(Level.DEBUG, () ->
+                    "reader: DiscoveryListener threw: " + re.getMessage());
+        }
+        // Auto-cleanup: after FINAL for a CURRENT-only interest, the router
+        // won't send more. Remove from the map so we don't leak.
+        // (CurrentFuture callers should call finalInterest() explicitly.)
+        // We can't tell the mode from here, so we leave cleanup to the caller.
     }
 
     /** Turn one inbound PUSH into a {@link Sample} and route to matching subscriptions. */

@@ -23,6 +23,9 @@ import io.mdudel.zenoh.purejava.transport.TlsTransport;
 import io.mdudel.zenoh.purejava.transport.Transport;
 import io.mdudel.zenoh.purejava.transport.WsTransport;
 import io.mdudel.zenoh.purejava.wire.KeyExpr;
+import io.mdudel.zenoh.purejava.wire.messages.Declare;
+import io.mdudel.zenoh.purejava.wire.messages.DeclareSubscriber;
+import io.mdudel.zenoh.purejava.wire.messages.Interest;
 
 import java.io.IOException;
 import java.lang.System.Logger;
@@ -201,6 +204,114 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
         Subscription sub = subscribe(keyExpr);
         sub.forEach(onSample);
         return sub;
+    }
+
+    // ----- topic discovery ---------------------------------------------
+
+    /**
+     * A running topic-discovery handle. Returned by
+     * {@link #discoverTopics(String, TopicListener)}. Call {@link #close()}
+     * to send a FINAL INTEREST and stop receiving updates.
+     */
+    public final class TopicDiscovery implements AutoCloseable {
+        private final long interestId;
+        private final java.util.concurrent.atomic.AtomicBoolean closed =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        TopicDiscovery(long id) { this.interestId = id; }
+        public long interestId() { return interestId; }
+        public boolean isOpen() { return !closed.get(); }
+        @Override public void close() {
+            if (!closed.compareAndSet(false, true)) return;
+            ZenohSession s = session;
+            if (s == null) return;
+            try { s.finalInterest(interestId); }
+            catch (SessionException e) {
+                LOG.log(Level.DEBUG, () -> "finalInterest failed: " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Callback surface for topic discovery. Fires once per DECLARE record
+     * the router returns matching an INTEREST.
+     *
+     * <ul>
+     *   <li>{@link #onTopicDeclared(String, long)} — a new subscription
+     *       exists in the network for the given key expression.</li>
+     *   <li>{@link #onTopicUndeclared(long)} — a previously-seen
+     *       subscription is gone.</li>
+     *   <li>{@link #onDiscoveryComplete()} — the router finished
+     *       replaying current state; further callbacks (if any) are
+     *       live updates. Only fires for CURRENT / CURRENT_FUTURE modes.</li>
+     * </ul>
+     *
+     * <p>Default {@code onTopicUndeclared} and {@code onDiscoveryComplete}
+     * are no-ops so simple use cases can just implement
+     * {@code onTopicDeclared}.</p>
+     */
+    public interface TopicListener {
+        void onTopicDeclared(String keyExpr, long declaredById);
+        default void onTopicUndeclared(long declaredById) {}
+        default void onDiscoveryComplete() {}
+    }
+
+    /**
+     * Discover subscriber topics matching a key expression pattern.
+     * Sends a CURRENT_FUTURE INTEREST to the router; the listener fires
+     * once per existing DeclareSubscriber matching the pattern, then
+     * {@link TopicListener#onDiscoveryComplete()}, then for future
+     * subscriptions as they come and go.
+     *
+     * <p>Note: this returns declarations SEEN BY THE ROUTER, not
+     * necessarily the set of keys anyone has ever published under.
+     * If there is no subscriber for a key, that key does not appear
+     * here even if there is an active publisher for it. To catch
+     * publishers directly, subscribe to {@code **} with
+     * {@link #subscribeAndConsume} and observe {@link Sample#key()}.</p>
+     *
+     * @param keyExprPattern KeyExpr pattern to filter on (wildcards
+     *                       welcome; use {@code "**"} to see everything).
+     */
+    public TopicDiscovery discoverTopics(String keyExprPattern, TopicListener listener) throws IOException {
+        Objects.requireNonNull(keyExprPattern, "keyExprPattern");
+        Objects.requireNonNull(listener,       "listener");
+        ZenohSession s = session;
+        if (s == null || s.state() != SessionState.OPEN) {
+            throw new IOException("PureJavaZenohSubscriber is not started");
+        }
+        try {
+            long id = s.declareInterest(Interest.Mode.CURRENT_FUTURE,
+                    Interest.OPT_SUBSCRIBERS, keyExprPattern,
+                    (declare, isFinal) -> {
+                        if (isFinal) {
+                            try { listener.onDiscoveryComplete(); }
+                            catch (RuntimeException re) { /* absorb */ }
+                            return;
+                        }
+                        Declare.Body body = declare.body();
+                        if (body.kind() == Declare.Body.BodyKind.DECLARE_SUBSCRIBER) {
+                            DeclareSubscriber ds = body.asDeclareSubscriber();
+                            String k = ds.keySuffix() == null ? "" : ds.keySuffix();
+                            try { listener.onTopicDeclared(k, ds.id()); }
+                            catch (RuntimeException re) { /* absorb */ }
+                        } else if (body.kind() == Declare.Body.BodyKind.UNDECLARE_SUBSCRIBER) {
+                            try { listener.onTopicUndeclared(body.asUndeclareSubscriber().id()); }
+                            catch (RuntimeException re) { /* absorb */ }
+                        }
+                    });
+            return new TopicDiscovery(id);
+        } catch (SessionException e) {
+            lastError = "discoverTopics failed: " + e.getMessage();
+            throw new IOException(lastError, e);
+        }
+    }
+
+    /**
+     * Sugar: {@code discoverTopics("**", listener)}. Watches for every
+     * subscription the router knows about.
+     */
+    public TopicDiscovery discoverAllTopics(TopicListener listener) throws IOException {
+        return discoverTopics("**", listener);
     }
 
     // ----- endpoint parsing + transport factory --------------------------
