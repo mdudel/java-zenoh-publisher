@@ -55,6 +55,7 @@ public final class TlsConfig {
     /** Default TLS handshake timeout (ms). */
     public static final int DEFAULT_HANDSHAKE_TIMEOUT_MS = 15_000;
 
+    private final SSLContext       sslContext;
     private final SSLSocketFactory socketFactory;
     private final List<String>     enabledProtocols;
     private final List<String>     enabledCipherSuites;  // null = JVM default
@@ -62,12 +63,14 @@ public final class TlsConfig {
     private final int              handshakeTimeoutMs;
     private final boolean          needClientAuth;       // for future server-mode reuse
 
-    private TlsConfig(SSLSocketFactory socketFactory,
+    private TlsConfig(SSLContext sslContext,
+                      SSLSocketFactory socketFactory,
                       List<String> enabledProtocols,
                       List<String> enabledCipherSuites,
                       boolean verifyHostname,
                       int handshakeTimeoutMs,
                       boolean needClientAuth) {
+        this.sslContext          = sslContext;
         this.socketFactory       = socketFactory;
         this.enabledProtocols    = List.copyOf(enabledProtocols);
         this.enabledCipherSuites = enabledCipherSuites == null ? null : List.copyOf(enabledCipherSuites);
@@ -76,6 +79,8 @@ public final class TlsConfig {
         this.needClientAuth      = needClientAuth;
     }
 
+    /** The underlying {@link SSLContext}. Exposed for consumers (e.g. {@code WsTransport}) that need to configure an {@link javax.net.ssl.SSLEngine} rather than an {@link SSLSocket}. */
+    public SSLContext       sslContext()          { return sslContext; }
     public SSLSocketFactory socketFactory()       { return socketFactory; }
     public List<String>     enabledProtocols()    { return enabledProtocols; }
     public List<String>     enabledCipherSuites() { return enabledCipherSuites; }
@@ -205,7 +210,7 @@ public final class TlsConfig {
                         kmf != null ? kmf.getKeyManagers() : null,
                         tmf != null ? tmf.getTrustManagers() : null,
                         new SecureRandom());
-                return new TlsConfig(ctx.getSocketFactory(),
+                return new TlsConfig(ctx, ctx.getSocketFactory(),
                         enabledProtocols, enabledCipherSuites,
                         verifyHostname, handshakeTimeoutMs, needClientAuth);
             } catch (IOException | GeneralSecurityException e) {
