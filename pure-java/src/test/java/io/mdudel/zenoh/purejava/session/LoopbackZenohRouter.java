@@ -9,11 +9,15 @@ import io.mdudel.zenoh.purejava.wire.Extension;
 import io.mdudel.zenoh.purejava.wire.WBuf;
 import io.mdudel.zenoh.purejava.wire.WhatAmI;
 import io.mdudel.zenoh.purejava.wire.ZenohId;
+import io.mdudel.zenoh.purejava.wire.Encoding;
 import io.mdudel.zenoh.purejava.wire.messages.Close;
+import io.mdudel.zenoh.purejava.wire.messages.Declare;
 import io.mdudel.zenoh.purejava.wire.messages.Frame;
 import io.mdudel.zenoh.purejava.wire.messages.Init;
 import io.mdudel.zenoh.purejava.wire.messages.KeepAlive;
 import io.mdudel.zenoh.purejava.wire.messages.Open;
+import io.mdudel.zenoh.purejava.wire.messages.Push;
+import io.mdudel.zenoh.purejava.wire.messages.Put;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -211,6 +215,67 @@ public final class LoopbackZenohRouter implements AutoCloseable {
 
         public void sendClose() throws IOException {
             sendRaw(Close.sessionGeneric().encode());
+        }
+
+        /**
+         * Push a message down to the client, subscriber-side. Wraps a
+         * PUT in a PUSH in a FRAME with the given sequence number.
+         * The client's session reader will decode, key-match against its
+         * subscriptions, and enqueue into any matching Subscription.
+         */
+        public void sendPush(long sn, String key, byte[] payload) throws IOException {
+            sendPush(sn, key, payload, Encoding.EMPTY);
+        }
+
+        public void sendPush(long sn, String key, byte[] payload, Encoding encoding)
+                throws IOException {
+            Put put = new Put(null, encoding, java.util.List.of(), payload);
+            Push push = Push.ofPut(key, put);
+            Frame frame = new Frame(sn, /* reliable = */ true,
+                    java.util.List.of(), push.encode());
+            sendRaw(frame.encode());
+        }
+
+        public void sendPushString(long sn, String key, String utf8Payload) throws IOException {
+            sendPush(sn, key,
+                    utf8Payload.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    Encoding.of(Encoding.ID_ZENOH_STRING));
+        }
+
+        /**
+         * Filter the {@link #received} queue for batches whose header id
+         * nibble is DECLARE (0x1e), decode each, and return the list.
+         * Non-destructive: does NOT drain the queue.
+         */
+        public java.util.List<Declare> receivedDeclares() {
+            java.util.List<Declare> out = new java.util.ArrayList<>();
+            for (Batch b : received) {
+                if (b.id() == Declare.ID) {
+                    // A Declare arrives wrapped in a Frame here (the client
+                    // sends `Frame(sn, ..., declare.encode())`), so the
+                    // batch's leading byte is actually the Frame's header.
+                    // Wait -- we filter by batch[0] & 0x1F == 0x1e (Declare.ID)
+                    // but that ALSO matches Frame.ID? No: Frame.ID=0x05.
+                    // If b.id()==0x1e then bytes[0]&0x1F==0x1e -> DECLARE
+                    // sent WITHOUT a Frame wrapper. If the client wraps it
+                    // in a Frame, b.id() would be 0x05.
+                    // Decode straight from the raw batch bytes.
+                    try { out.add(Declare.decode(b.bytes())); }
+                    catch (RuntimeException ignored) {}
+                }
+            }
+            // Also unwrap any Frames whose payload is a DECLARE.
+            for (Batch b : received) {
+                if (b.id() != Frame.ID) continue;
+                try {
+                    Frame f = Frame.decode(b.bytes());
+                    byte[] payload = f.payload();
+                    if (payload.length > 0 && (payload[0] & 0x1F) == Declare.ID) {
+                        out.add(Declare.decode(payload));
+                    }
+                } catch (RuntimeException ignored) {}
+            }
+            return out;
         }
 
         public ZenohId clientId() { return clientId; }

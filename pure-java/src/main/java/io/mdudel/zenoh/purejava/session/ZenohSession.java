@@ -8,14 +8,18 @@ package io.mdudel.zenoh.purejava.session;
 import io.mdudel.zenoh.purejava.transport.Transport;
 import io.mdudel.zenoh.purejava.transport.TransportException;
 import io.mdudel.zenoh.purejava.wire.Encoding;
+import io.mdudel.zenoh.purejava.wire.KeyExpr;
 import io.mdudel.zenoh.purejava.wire.ZenohId;
 import io.mdudel.zenoh.purejava.wire.messages.Close;
+import io.mdudel.zenoh.purejava.wire.messages.Declare;
+import io.mdudel.zenoh.purejava.wire.messages.DeclareSubscriber;
 import io.mdudel.zenoh.purejava.wire.messages.Frame;
 import io.mdudel.zenoh.purejava.wire.messages.Init;
 import io.mdudel.zenoh.purejava.wire.messages.KeepAlive;
 import io.mdudel.zenoh.purejava.wire.messages.Open;
 import io.mdudel.zenoh.purejava.wire.messages.Push;
 import io.mdudel.zenoh.purejava.wire.messages.Put;
+import io.mdudel.zenoh.purejava.wire.messages.UndeclareSubscriber;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
@@ -99,6 +103,9 @@ public final class ZenohSession implements AutoCloseable {
     private final AtomicLong                    outboundSn   = new AtomicLong(0);
     private final AtomicLong                    lastSendNanos = new AtomicLong(0);
     private final AtomicLong                    lastRecvNanos = new AtomicLong(0);
+    private final AtomicLong                    subscriberIdSeq = new AtomicLong(1);
+    private final java.util.concurrent.ConcurrentHashMap<Long, Subscription> subscriptions =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     private final AtomicBoolean                 closed = new AtomicBoolean(false);
     private volatile ScheduledExecutorService   scheduler;
@@ -238,6 +245,78 @@ public final class ZenohSession implements AutoCloseable {
     public void publishJson(String keyExpr, String json) throws SessionException {
         publish(keyExpr, json.getBytes(java.nio.charset.StandardCharsets.UTF_8),
                 Encoding.of(Encoding.ID_APPLICATION_JSON));
+    }
+
+    // ---- subscribe --------------------------------------------------------
+
+    /**
+     * Declare a subscription against the router for the given key
+     * expression (may contain wildcards; see {@link KeyExpr}).
+     * Sends a DECLARE + DeclareSubscriber to the router and returns a
+     * {@link Subscription} handle backed by a blocking queue.
+     *
+     * <p>Repeated calls with equal KeyExprs are treated as distinct
+     * subscriptions &mdash; each gets its own id, its own DECLARE, and
+     * its own inbox. A single inbound message that matches N of them
+     * will be delivered to all N.</p>
+     */
+    public Subscription declareSubscriber(KeyExpr keyExpr) throws SessionException {
+        Objects.requireNonNull(keyExpr, "keyExpr");
+        if (state.get() != SessionState.OPEN) {
+            throw new SessionException("declareSubscriber requires state=OPEN, current=" + state.get());
+        }
+        long id = subscriberIdSeq.getAndIncrement();
+        Subscription sub = new Subscription(id, keyExpr, this);
+        // Register BEFORE emitting the DECLARE so a fast reply from the router
+        // (or, more likely, an already-in-flight PUSH) has somewhere to land.
+        subscriptions.put(id, sub);
+        try {
+            Declare declare = Declare.ofDeclareSubscriber(
+                    DeclareSubscriber.ofKeyExpr(id, keyExpr.value()));
+            long sn = outboundSn.getAndIncrement();
+            sendRaw(rawFrameCarrying(sn, declare.encode()));
+            return sub;
+        } catch (SessionException se) {
+            subscriptions.remove(id);
+            throw se;
+        }
+    }
+
+    /**
+     * Sugar for {@link #declareSubscriber(KeyExpr)} taking a string.
+     */
+    public Subscription declareSubscriber(String keyExpr) throws SessionException {
+        return declareSubscriber(KeyExpr.of(keyExpr));
+    }
+
+    /**
+     * Called by {@link Subscription#close()} to send the matching
+     * UndeclareSubscriber and unregister. Best-effort; failures on the
+     * transport are logged and swallowed since the subscription is
+     * being torn down anyway.
+     */
+    void undeclareSubscriberInternal(Subscription sub) {
+        if (subscriptions.remove(sub.id()) == null) return;   // already gone
+        if (state.get() != SessionState.OPEN || !transport.isOpen()) return;
+        try {
+            Declare declare = Declare.ofUndeclareSubscriber(UndeclareSubscriber.of(sub.id()));
+            long sn = outboundSn.getAndIncrement();
+            sendRaw(rawFrameCarrying(sn, declare.encode()));
+        } catch (SessionException se) {
+            LOG.log(Level.DEBUG, () -> "UndeclareSubscriber send failed: " + se.getMessage());
+        }
+    }
+
+    /**
+     * Wrap arbitrary network-message bytes in a reliable transport Frame.
+     * This mirrors what {@link Frame#ofPush(long, boolean, Push)} does but
+     * accepts an already-encoded network message so we can reuse it for
+     * DECLARE too (Frame's tail is opaque to the wire; both PUSH and DECLARE
+     * are legal payloads).
+     */
+    private byte[] rawFrameCarrying(long sn, byte[] networkMessageBytes) {
+        return new Frame(sn, /* reliable = */ true,
+                java.util.List.of(), networkMessageBytes).encode();
     }
 
     @Override public void close() {
@@ -388,13 +467,97 @@ public final class ZenohSession implements AutoCloseable {
                 LOG.log(Level.DEBUG, () -> "peer sent CLOSE");
                 close();
             }
-            case Frame.ID -> {
-                // Server-to-client frames aren't part of the publish path; log and drop.
-                LOG.log(Level.TRACE, () -> "reader: server FRAME (ignored by publisher)");
-            }
+            case Frame.ID -> handleInboundFrame(batch);
             default -> LOG.log(Level.DEBUG, () ->
                     "reader: unknown message id 0x" + Integer.toHexString(id));
         }
+    }
+
+    /**
+     * Decode an inbound FRAME. Its payload is a concatenation of
+     * network messages (typically PUSH for subscriber-side traffic).
+     * We currently only route PUSH into subscriptions; other network
+     * messages (DECLARE, REQUEST, RESPONSE, OAM) are logged and dropped.
+     */
+    private void handleInboundFrame(byte[] batch) {
+        Frame frame;
+        try {
+            frame = Frame.decode(batch);
+        } catch (RuntimeException e) {
+            LOG.log(Level.DEBUG, () -> "reader: FRAME decode failed: " + e.getMessage());
+            return;
+        }
+        if (subscriptions.isEmpty()) return;   // fast path: nobody's listening
+        byte[] payload = frame.payload();
+        int off = 0;
+        // Payload is a concatenation of self-delimiting network messages.
+        // For the publisher-only period, this was always empty; now we
+        // walk through it. Only PUSH is decoded; unknown/other message
+        // types abort the walk to avoid mis-slicing the buffer.
+        while (off < payload.length) {
+            int msgId = payload[off] & 0x1F;
+            if (msgId != Push.ID) {
+                LOG.log(Level.TRACE, () ->
+                        "reader: inbound network message id 0x" + Integer.toHexString(msgId)
+                                + " not routed (subscriber-side only handles PUSH)");
+                return;
+            }
+            byte[] tail = new byte[payload.length - off];
+            System.arraycopy(payload, off, tail, 0, tail.length);
+            Push push;
+            try {
+                push = Push.decode(tail);
+            } catch (RuntimeException e) {
+                LOG.log(Level.DEBUG, () -> "reader: PUSH decode failed: " + e.getMessage());
+                return;
+            }
+            deliverPush(push);
+            // Push.decode consumes the entire tail; a single FRAME can carry
+            // multiple PUSHes only if the router batches them, and in that
+            // case each is length-delimited by its own varint fields.
+            // For the MVP, one FRAME == one PUSH; break to avoid decoding
+            // the same bytes twice.
+            return;
+        }
+    }
+
+    /** Turn one inbound PUSH into a {@link Sample} and route to matching subscriptions. */
+    private void deliverPush(Push push) {
+        String key = push.keySuffix();
+        if (key == null || key.isEmpty()) {
+            // MVP subscriber doesn't handle numeric-only key mappings
+            // (DeclareKeyExpr / DeclareToken tables); the publisher path
+            // always emits full suffixes so this only happens with a router
+            // that has declared an ID mapping and is using it. Log + drop.
+            LOG.log(Level.TRACE, () -> "reader: PUSH with no suffix; numeric mapping not supported");
+            return;
+        }
+        // Body is a PushBody -- for now we only decode Put (id 0x01).
+        byte[] body = push.body();
+        if (body.length == 0 || (body[0] & 0x1F) != Put.ID) {
+            LOG.log(Level.TRACE, () -> "reader: PUSH body is not PUT; dropped");
+            return;
+        }
+        Put put;
+        try { put = Put.decode(body); }
+        catch (RuntimeException e) {
+            LOG.log(Level.DEBUG, () -> "reader: PUT decode failed: " + e.getMessage());
+            return;
+        }
+        Sample sample = new Sample(
+                key, put.payload(), put.encoding(),
+                put.timestamp(),  /* sourceId */ null,
+                System.nanoTime());
+        int matched = 0;
+        for (Subscription sub : subscriptions.values()) {
+            if (sub.keyExpr().matches(key)) {
+                sub.offer(sample);
+                matched++;
+            }
+        }
+        int matchedFinal = matched;
+        LOG.log(Level.TRACE, () ->
+                "reader: PUSH key='" + key + "' routed to " + matchedFinal + " subscription(s)");
     }
 
     private void forceClosed() {
