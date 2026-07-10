@@ -76,6 +76,18 @@ tradeoffs are wrong for your use case, use the JNI-backed sibling.
 | `wss/host:port`  | WebSocket over TLS       | JDK only (`java.net.http.WebSocket`) |
 | `ws/host:port`   | WebSocket plaintext      | JDK only (same, freebie) |
 
+**TLS key material**: both **PEM** (`rootCa.pem` + `client.pem` + `client.key`)
+and **PKCS12** (`*.p12` / `*.pfx`) are accepted; the file extension
+picks the loader. PEM matches the JNI sibling's argument shape
+(`rootCaCertPath` / `clientCertPath` / `clientKeyPath`), so the two
+publisher facades are drop-in swappable for mTLS deployments.
+Supported private-key PEM formats: PKCS#8 unencrypted
+(`-----BEGIN PRIVATE KEY-----`, the modern default) and PKCS#1
+(`-----BEGIN RSA PRIVATE KEY-----`, what legacy `openssl req` emits
+— auto-wrapped in-memory so no `openssl pkcs8` conversion needed).
+Encrypted PKCS#8 keys are rejected with a message pointing at the
+conversion command.
+
 **Deferred / out of scope**:
 
 - **UDP** - Zenoh's UDP transport uses a distinct framing model.

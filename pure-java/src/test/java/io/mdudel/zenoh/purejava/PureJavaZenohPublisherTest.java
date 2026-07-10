@@ -229,6 +229,67 @@ class PureJavaZenohPublisherTest {
         } finally { t.close(); }
     }
 
+    @Test void buildTransportAcceptsPemMtlsShape() throws Exception {
+        // JNI-compatible shape: rootCa.pem + client.pem + client.key.
+        // Proves the facade auto-detects PEM by extension and wires TlsConfig
+        // through the PEM builders. No live server needed; we just build the
+        // transport and confirm it materialises without complaint.
+        java.nio.file.Path rootCa = pemResource("server-cert.pem");
+        java.nio.file.Path cert   = pemResource("client-cert.pem");
+        java.nio.file.Path key    = pemResource("client-key.pem");
+        PureJavaZenohPublisher pub = PureJavaZenohPublisher.builder()
+                .connectEndpoint("tls/127.0.0.1:9000")
+                .rootCaCertPath(rootCa.toString())
+                .clientCertPath(cert.toString())
+                .clientKeyPath(key.toString())
+                .verifyHostname(false)
+                .build();
+        Transport t = pub.buildTransport();
+        try {
+            assertTrue(t instanceof TlsTransport);
+        } finally { t.close(); }
+    }
+
+    @Test void buildTransportAcceptsPemMtlsWithLegacyPkcs1Key() throws Exception {
+        java.nio.file.Path rootCa = pemResource("server-cert.pem");
+        java.nio.file.Path cert   = pemResource("client-cert.pem");
+        java.nio.file.Path key    = pemResource("client-key-pkcs1.pem");
+        PureJavaZenohPublisher pub = PureJavaZenohPublisher.builder()
+                .connectEndpoint("tls/127.0.0.1:9000")
+                .rootCaCertPath(rootCa.toString())
+                .clientCertPath(cert.toString())
+                .clientKeyPath(key.toString())
+                .verifyHostname(false)
+                .build();
+        Transport t = pub.buildTransport();
+        try {
+            assertTrue(t instanceof TlsTransport);
+        } finally { t.close(); }
+    }
+
+    @Test void buildTransportRejectsHalfPemClientAuth() {
+        // clientCertPath alone (no keyPath) with a PEM extension should fail loudly
+        // -- PEM needs BOTH cert AND key, unlike PKCS12 which is a single file.
+        java.nio.file.Path cert = pemResource("client-cert.pem");
+        PureJavaZenohPublisher pub = PureJavaZenohPublisher.builder()
+                .connectEndpoint("tls/127.0.0.1:9000")
+                .clientCertPath(cert.toString())
+                .verifyHostname(false)
+                .build();
+        IOException e = assertThrows(IOException.class, pub::buildTransport);
+        assertTrue(e.getMessage().contains("PEM client authentication requires BOTH"),
+                "message was: " + e.getMessage());
+    }
+
+    // ---- helpers -----------------------------------------------------
+
+    private static java.nio.file.Path pemResource(String name) {
+        java.net.URL u = PureJavaZenohPublisherTest.class.getClassLoader().getResource(name);
+        if (u == null) throw new IllegalStateException("test resource missing: " + name);
+        try { return java.nio.file.Paths.get(u.toURI()); }
+        catch (java.net.URISyntaxException e) { throw new IllegalStateException(e); }
+    }
+
     @Test void cliMainDoesNotThrowOnValidRouter() throws Exception {
         // Run PureJavaZenohPublisher.main with our loopback endpoint.
         String[] args = {

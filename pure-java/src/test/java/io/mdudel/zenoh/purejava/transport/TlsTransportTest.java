@@ -303,6 +303,107 @@ class TlsTransportTest {
         accept.join(3_000);
     }
 
+    @Test void pemTrustStoreRoundtripOverTls() throws Exception {
+        // Same handshake as connectSendReceiveRoundtripOverTls, but the client
+        // trusts the server via a PEM CA file instead of a PKCS12 trust store.
+        // Proves the JNI-shape (rootCa.pem) works drop-in for our facade.
+        java.util.concurrent.CountDownLatch connected = new java.util.concurrent.CountDownLatch(1);
+        Thread accept = acceptOnce(peer -> {
+            connected.countDown();
+            byte[] batch = StreamFramer.readFrame(peer.getInputStream());
+            StreamFramer.writeFrame(peer.getOutputStream(), batch);   // echo
+            peer.getOutputStream().flush();
+            Thread.sleep(50);
+        });
+
+        TlsConfig cfg = TlsConfig.builder()
+                .trustStorePem(resource("server-cert.pem"))
+                .build();
+        try (TlsTransport t = new TlsTransport("127.0.0.1", port, cfg)) {
+            t.connect();
+            assertTrue(connected.await(3, java.util.concurrent.TimeUnit.SECONDS));
+            t.send(new byte[] { 'p', 'i', 'n', 'g' });
+            byte[] back = t.receive(3, java.util.concurrent.TimeUnit.SECONDS);
+            assertArrayEquals(new byte[] { 'p', 'i', 'n', 'g' }, back);
+        }
+        accept.join(3_000);
+    }
+
+    @Test void pemMtlsRoundtripOverTls() throws Exception {
+        // Same as mutualTlsHandshakeSucceedsWhenBothSidesProvideCert, but the
+        // client presents its cert via PEM cert + PEM key instead of a PKCS12
+        // keystore. Proves the JNI-shape (client.pem + client.key) works.
+        server.close();
+        server = serverSocket(/* needClientAuth = */ true);
+        port   = server.getLocalPort();
+
+        java.util.concurrent.CountDownLatch connected = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> peerCn = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread accept = acceptOnce(peer -> {
+            connected.countDown();
+            peer.startHandshake();
+            var certs = peer.getSession().getPeerCertificates();
+            peerCn.set(certs[0].toString());
+            Thread.sleep(20);
+        });
+
+        TlsConfig cfg = TlsConfig.builder()
+                .trustStorePem(resource("server-cert.pem"))
+                .keyStorePem(resource("client-cert.pem"), resource("client-key.pem"))
+                .build();
+        try (TlsTransport t = new TlsTransport("127.0.0.1", port, cfg)) {
+            t.connect();
+            assertTrue(connected.await(3, java.util.concurrent.TimeUnit.SECONDS));
+        }
+        accept.join(3_000);
+        assertNotNull(peerCn.get(), "server should have received client cert");
+        assertTrue(peerCn.get().contains("CN=client"),
+                "peer cert should be CN=client: " + peerCn.get());
+    }
+
+    @Test void pemMtlsAlsoWorksWithLegacyPkcs1Key() throws Exception {
+        // Same as pemMtlsRoundtripOverTls but the private key file is the
+        // PKCS#1 flavour that legacy `openssl req` emits. Proves the auto-wrap
+        // path in PemLoader works end-to-end through SSLContext.
+        server.close();
+        server = serverSocket(/* needClientAuth = */ true);
+        port   = server.getLocalPort();
+
+        java.util.concurrent.CountDownLatch connected = new java.util.concurrent.CountDownLatch(1);
+        Thread accept = acceptOnce(peer -> {
+            connected.countDown();
+            peer.startHandshake();
+            Thread.sleep(20);
+        });
+
+        TlsConfig cfg = TlsConfig.builder()
+                .trustStorePem(resource("server-cert.pem"))
+                .keyStorePem(resource("client-cert.pem"), resource("client-key-pkcs1.pem"))
+                .build();
+        try (TlsTransport t = new TlsTransport("127.0.0.1", port, cfg)) {
+            t.connect();
+            assertTrue(connected.await(3, java.util.concurrent.TimeUnit.SECONDS));
+        }
+        accept.join(3_000);
+    }
+
+    @Test void trustStorePemOverridesEarlierPkcs12TrustStore() throws Exception {
+        // Documented "last-setter-wins" UX: calling trustStorePem after
+        // trustStore silently uses the PEM (not an error). The reciprocal
+        // is also true (see trustStore's implementation). This test pins
+        // the behaviour so a future refactor can't silently regress it
+        // without breaking a test.
+        Path p12 = resource("server.p12");
+        Path pem = resource("server-cert.pem");
+        // No exception, no server socket needed; builder just materialises
+        // an SSLContext from the PEM path.
+        TlsConfig cfg = TlsConfig.builder()
+                .trustStore(p12, PW)      // ignored
+                .trustStorePem(pem)       // wins
+                .build();
+        assertNotNull(cfg.sslContext());
+    }
+
     @Test void invalidPortRejectedAtConstruction() {
         TlsConfig cfg = TlsConfig.builder().trustStore(clientTruststore, PW).build();
         assertThrows(IllegalArgumentException.class, () -> new TlsTransport("h", 0, cfg));

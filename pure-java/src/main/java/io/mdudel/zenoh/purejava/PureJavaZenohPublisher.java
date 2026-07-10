@@ -256,27 +256,96 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
         };
     }
 
+    /**
+     * Build a {@link TlsConfig} from the builder's rootCa/clientCert/clientKey
+     * settings. Two formats are auto-detected by file extension:
+     *
+     * <ul>
+     *   <li>PEM (extensions {@code .pem} / {@code .crt} / {@code .cer} /
+     *       {@code .key}) &mdash; matches the JNI sibling's shape:
+     *       {@code rootCa.pem}, {@code client.pem}, {@code client.key}.
+     *       No password required.</li>
+     *   <li>PKCS12 (extensions {@code .p12} / {@code .pfx}) &mdash; combined
+     *       trust store OR combined key store, password from
+     *       {@link Builder#keyStorePassword(char[])} (default {@code "changeit"}).</li>
+     * </ul>
+     *
+     * <p>You may mix formats: e.g. a PEM CA + a PKCS12 client keystore.
+     * If neither {@code rootCaCertPath} nor {@code clientCertPath} are set,
+     * falls back to the JVM default trust store (typically {@code cacerts}).</p>
+     */
     private TlsConfig buildTlsConfig() throws IOException {
         TlsConfig.Builder tb = TlsConfig.builder().verifyHostname(verifyHostname);
+
+        // ---- trust store ----------------------------------------------
         if (!rootCaCertPath.isEmpty()) {
-            Path p = Paths.get(rootCaCertPath);
-            if (!Files.isReadable(p)) {
-                throw new IOException("rootCaCertPath not readable: " + rootCaCertPath);
+            Path p = requireReadable(rootCaCertPath, "rootCaCertPath");
+            if (isPem(p)) {
+                tb.trustStorePem(p);
+            } else if (isPkcs12(p)) {
+                tb.trustStore(p, keyStorePassword);
+            } else {
+                throw new IOException(
+                        "rootCaCertPath must end in .pem/.crt/.cer (PEM) or .p12/.pfx (PKCS12): "
+                                + rootCaCertPath);
             }
-            tb.trustStore(p, keyStorePassword);
         } else {
             tb.trustSystem();
         }
-        if (!clientCertPath.isEmpty() || !clientKeyPath.isEmpty()) {
-            // Use whichever of the two paths is populated as the keystore.
-            String path = !clientCertPath.isEmpty() ? clientCertPath : clientKeyPath;
-            Path p = Paths.get(path);
-            if (!Files.isReadable(p)) {
-                throw new IOException("client keystore not readable: " + path);
+
+        // ---- key store (mTLS) -----------------------------------------
+        // JNI-compatible shape: clientCertPath + clientKeyPath as PEM.
+        // PKCS12 shape: clientCertPath OR clientKeyPath as a single .p12.
+        if (!clientCertPath.isEmpty() && !clientKeyPath.isEmpty()) {
+            Path cert = requireReadable(clientCertPath, "clientCertPath");
+            Path key  = requireReadable(clientKeyPath,  "clientKeyPath");
+            if (isPem(cert) && isPem(key)) {
+                tb.keyStorePem(cert, key);
+            } else if (isPkcs12(cert) && cert.equals(key)) {
+                tb.keyStore(cert, keyStorePassword, keyStorePassword);
+            } else if (isPkcs12(cert) || isPkcs12(key)) {
+                throw new IOException(
+                        "for PKCS12 client keystore, set clientCertPath and clientKeyPath "
+                                + "to the SAME .p12 file (or leave one empty); PEM keys need "
+                                + "BOTH clientCertPath (.pem) AND clientKeyPath (.key/.pem) set");
+            } else {
+                throw new IOException(
+                        "clientCertPath / clientKeyPath must be PEM pair (.pem/.crt/.cer + .pem/.key) "
+                                + "or PKCS12 (.p12/.pfx)");
             }
-            tb.keyStore(p, keyStorePassword, keyStorePassword);
+        } else if (!clientCertPath.isEmpty() || !clientKeyPath.isEmpty()) {
+            // Only ONE side set -- must be PKCS12 (combined keystore) or the user
+            // forgot the other half.
+            String path = !clientCertPath.isEmpty() ? clientCertPath : clientKeyPath;
+            Path p = requireReadable(path,
+                    !clientCertPath.isEmpty() ? "clientCertPath" : "clientKeyPath");
+            if (isPkcs12(p)) {
+                tb.keyStore(p, keyStorePassword, keyStorePassword);
+            } else {
+                throw new IOException(
+                        "PEM client authentication requires BOTH clientCertPath (.pem) AND "
+                                + "clientKeyPath (.key or .pem) to be set; got only " + path);
+            }
         }
         return tb.build();
+    }
+
+    private static Path requireReadable(String pathStr, String argName) throws IOException {
+        Path p = Paths.get(pathStr);
+        if (!Files.isReadable(p)) {
+            throw new IOException(argName + " not readable: " + pathStr);
+        }
+        return p;
+    }
+
+    private static boolean isPem(Path p) {
+        String n = p.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        return n.endsWith(".pem") || n.endsWith(".crt") || n.endsWith(".cer") || n.endsWith(".key");
+    }
+
+    private static boolean isPkcs12(Path p) {
+        String n = p.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        return n.endsWith(".p12") || n.endsWith(".pfx");
     }
 
     private static IOException wrapAsIo(Throwable e, String message) {

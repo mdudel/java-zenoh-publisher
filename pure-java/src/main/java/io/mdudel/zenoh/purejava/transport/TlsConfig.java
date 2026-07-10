@@ -97,11 +97,14 @@ public final class TlsConfig {
         private Path         trustStorePath;
         private char[]       trustStorePassword;
         private String       trustStoreType   = "PKCS12";
+        private List<Path>   trustPemPaths;              // set instead of trustStorePath for PEM CAs
 
         private Path         keyStorePath;
         private char[]       keyStorePassword;
         private char[]       keyPassword;
         private String       keyStoreType     = "PKCS12";
+        private Path         keyPemCertChain;            // set instead of keyStorePath for PEM key material
+        private Path         keyPemPrivateKey;
 
         private List<String> enabledProtocols    = DEFAULT_PROTOCOLS;
         private List<String> enabledCipherSuites = null;
@@ -131,6 +134,25 @@ public final class TlsConfig {
         public Builder trustSystem() {
             this.trustStorePath     = null;
             this.trustStorePassword = null;
+            this.trustPemPaths      = null;
+            return this;
+        }
+
+        /**
+         * Trust the CA certificate(s) in one or more PEM files. Every
+         * {@code -----BEGIN CERTIFICATE-----} block in each file is added
+         * to an in-memory trust store, so a chain file (leaf + intermediates)
+         * works as one argument, and multiple root CAs work as multiple
+         * arguments. Mutually exclusive with {@link #trustStore(Path, char[])}.
+         */
+        public Builder trustStorePem(Path... caPemPaths) {
+            if (caPemPaths == null || caPemPaths.length == 0) {
+                throw new IllegalArgumentException("at least one PEM path required");
+            }
+            for (Path p : caPemPaths) Objects.requireNonNull(p, "caPemPath");
+            this.trustPemPaths      = List.of(caPemPaths);
+            this.trustStorePath     = null;   // clear PKCS12 setting if any
+            this.trustStorePassword = null;
             return this;
         }
 
@@ -148,6 +170,30 @@ public final class TlsConfig {
         /** Change key store type. Default {@code "PKCS12"}. */
         public Builder keyStoreType(String type) {
             this.keyStoreType = Objects.requireNonNull(type, "type");
+            return this;
+        }
+
+        /**
+         * Present a client certificate and key in PEM form. Enables mTLS.
+         *
+         * <p>{@code certChainPem} may contain a single leaf certificate
+         * or a concatenated chain (leaf first, then intermediates).
+         * {@code privateKeyPem} may be PKCS#8
+         * ({@code -----BEGIN PRIVATE KEY-----}, the modern format) or
+         * PKCS#1 ({@code -----BEGIN RSA PRIVATE KEY-----}, the legacy
+         * format {@code openssl req} still emits by default). Encrypted
+         * PKCS#8 is not supported &mdash; convert with
+         * {@code openssl pkcs8 -topk8 -nocrypt} first, or use a PKCS12
+         * keystore which handles passwords natively.</p>
+         *
+         * <p>Mutually exclusive with {@link #keyStore(Path, char[], char[])}.</p>
+         */
+        public Builder keyStorePem(Path certChainPem, Path privateKeyPem) {
+            this.keyPemCertChain  = Objects.requireNonNull(certChainPem,  "certChainPem");
+            this.keyPemPrivateKey = Objects.requireNonNull(privateKeyPem, "privateKeyPem");
+            this.keyStorePath     = null;   // clear PKCS12 setting if any
+            this.keyStorePassword = null;
+            this.keyPassword      = null;
             return this;
         }
 
@@ -193,9 +239,28 @@ public final class TlsConfig {
 
         public TlsConfig build() {
             try {
+                if (trustStorePath != null && trustPemPaths != null) {
+                    throw new IllegalStateException(
+                            "trustStore(Path,char[]) and trustStorePem(Path...) are mutually exclusive");
+                }
+                if (keyStorePath != null && keyPemCertChain != null) {
+                    throw new IllegalStateException(
+                            "keyStore(...) and keyStorePem(cert,key) are mutually exclusive");
+                }
                 TrustManagerFactory tmf = null;
                 if (trustStorePath != null) {
                     KeyStore ts = loadKeyStore(trustStorePath, trustStorePassword, trustStoreType);
+                    tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+                    tmf.init(ts);
+                } else if (trustPemPaths != null) {
+                    KeyStore ts = KeyStore.getInstance("PKCS12");
+                    ts.load(null, null);
+                    int aliasN = 0;
+                    for (Path p : trustPemPaths) {
+                        for (java.security.cert.X509Certificate cert : PemLoader.readCertificates(p)) {
+                            ts.setCertificateEntry("ca-" + (aliasN++), cert);
+                        }
+                    }
                     tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
                     tmf.init(ts);
                 }
@@ -204,6 +269,20 @@ public final class TlsConfig {
                     KeyStore ks = loadKeyStore(keyStorePath, keyStorePassword, keyStoreType);
                     kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
                     kmf.init(ks, keyPassword);
+                } else if (keyPemCertChain != null) {
+                    java.util.List<java.security.cert.X509Certificate> chain =
+                            PemLoader.readCertificates(keyPemCertChain);
+                    java.security.PrivateKey privateKey =
+                            PemLoader.readPrivateKey(keyPemPrivateKey);
+                    KeyStore ks = KeyStore.getInstance("PKCS12");
+                    ks.load(null, null);
+                    // In-memory keystore requires SOME password on the key entry per JCA spec;
+                    // it's not stored anywhere and never persisted, so any non-null value works.
+                    char[] inMemoryPw = new char[0];
+                    ks.setKeyEntry("client", privateKey, inMemoryPw,
+                            chain.toArray(new java.security.cert.X509Certificate[0]));
+                    kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+                    kmf.init(ks, inMemoryPw);
                 }
                 SSLContext ctx = SSLContext.getInstance("TLS");
                 ctx.init(
