@@ -360,7 +360,14 @@ class TlsTransportTest {
     private static Path resource(String name) {
         URL u = TlsTransportTest.class.getClassLoader().getResource(name);
         if (u == null) throw new IllegalStateException("test resource missing: " + name);
-        return Paths.get(u.getPath());
+        // Use URI, NOT URL.getPath(). On Windows the latter returns
+        // "/D:/dir/file.p12" (leading slash before drive letter), which
+        // Paths.get rejects with InvalidPathException on the ':' at index 2.
+        // Paths.get(URI) understands the file: URI properly on all platforms.
+        try { return Paths.get(u.toURI()); }
+        catch (java.net.URISyntaxException e) {
+            throw new IllegalStateException("cannot convert resource URL to URI: " + u, e);
+        }
     }
 
     private static Path tempEmptyTrustStore() throws Exception {
