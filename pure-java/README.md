@@ -31,8 +31,10 @@ Roadmap for follow-up turns:
 | **A (done)**  | Scaffolding, VarInt, KeyExpr, API surface, tests |
 | **B1 (done)** | Codec primitives (WBuf, RBuf, ZenohId, Extension chain, WhatAmI) + INIT message |
 | **B2 (done)** | OPEN, CLOSE, KEEP_ALIVE transport messages |
-| **B3 (this)** | FRAME transport message + PUSH network carrier + PUT zenoh payload + Encoding + Timestamp |
-| **C**         | Transport layer: TCP -> TLS/mTLS -> WSS/ws |
+| **B3 (done)** | FRAME transport message + PUSH network carrier + PUT zenoh payload + Encoding + Timestamp |
+| **C1 (this)** | Plain TCP transport with 2-byte LE stream framing + one reader thread per link |
+| **C2**        | TLS + optional mTLS via `javax.net.ssl.SSLSocket` |
+| **C3**        | WSS via `java.net.http.WebSocket` (plaintext `ws` freebie) |
 | **D**         | Session state machine + KeepAlive thread + clean shutdown |
 | **E**         | Wire together `PureJavaZenohPublisher.start()`/`.publish()`, ship a sample project |
 | **F**         | End-to-end interop verification against a real `zenohd` (needs a pcap capture) |
@@ -164,6 +166,22 @@ The tests cover:
   ZenohId, NTP epoch offset matches RFC 868 (UNIX epoch = 2208988800 NTP
   seconds), `Timestamp.now(id)` round-trips through `toInstant()` within
   nanosecond tolerance.
+- **`StreamFramerTest`** - the 2-byte little-endian length prefix used
+  on TCP/TLS/WSS: writing and reading empty / small / boundary /
+  max-sized (65 535 B) frames, oversized-payload rejection, EOF at
+  a frame boundary vs mid-length vs mid-payload each surfacing with
+  a distinct message, reassembly across pathological 1-byte-per-`read`
+  streams, back-to-back multi-frame streams.
+- **`TcpTransportTest`** - loopback `ServerSocket` integration:
+  `connect()`/`send()`/`receive()` round-trip against a real socket
+  peer, connect-refused surfaces as `TransportException`, oversized
+  batch rejected without closing the transport, quiet-server
+  `receive(timeout)` returns `null`, remote clean close surfaces as
+  `null` and flips `isOpen()` to false, two concurrent sender threads
+  serialise cleanly on the write lock (no interleaved frames on the
+  wire), `close()` is idempotent, invalid ports rejected at
+  construction, double-`connect()` rejected, multi-frame in-order
+  delivery.
 
 ## Bridging logs
 
