@@ -34,8 +34,8 @@ Roadmap for follow-up turns:
 | **B3 (done)** | FRAME transport message + PUSH network carrier + PUT zenoh payload + Encoding + Timestamp |
 | **C1 (done)** | Plain TCP transport with 2-byte LE stream framing + one reader thread per link |
 | **C2 (done)** | TLS + optional mTLS via `javax.net.ssl.SSLSocket`, hostname verification on by default, `TlsConfig` builder |
-| **C3 (this)** | WS + WSS via `java.net.http.WebSocket` (JDK stdlib), fragmented-message reassembly, TLS via shared `TlsConfig` |
-| **D**         | Session state machine + KeepAlive thread + clean shutdown |
+| **C3 (done)** | WS + WSS via `java.net.http.WebSocket` (JDK stdlib), fragmented-message reassembly, TLS via shared `TlsConfig` |
+| **D (this)**  | `ZenohSession` state machine (CREATED→CONNECTING→OPENING→OPEN→CLOSING→CLOSED) + INIT/OPEN handshake ceremony + KEEP_ALIVE scheduler + lease-expiry watchdog + graceful CLOSE emission |
 | **E**         | Wire together `PureJavaZenohPublisher.start()`/`.publish()`, ship a sample project |
 | **F**         | End-to-end interop verification against a real `zenohd` (needs a pcap capture) |
 
@@ -172,6 +172,19 @@ The tests cover:
   a frame boundary vs mid-length vs mid-payload each surfacing with
   a distinct message, reassembly across pathological 1-byte-per-`read`
   streams, back-to-back multi-frame streams.
+- **`ZenohSessionTest`** - end-to-end session integration via a
+  loopback Zenoh router mock (`LoopbackZenohRouter`, ~330 LOC under
+  `src/test/java/`, still no third-party dep). Covers: 4-message
+  handshake reaches OPEN and captures remote `ZenohId`, double
+  `open()` rejected, publish-before-open rejected, publish emits
+  FRAME containing PUSH containing PUT with correct key/payload,
+  monotonic sequence numbers across sequential publishes, KEEP_ALIVE
+  fires when outbound quiet, KEEP_ALIVE skipped when outbound busy,
+  server-driven CLOSE tears the session down, `close()` emits CLOSE
+  frame to peer, `close()` idempotent, publish-after-close rejected,
+  handshake timeout, garbage InitAck rejected, lease expiry closes
+  session when server goes silent, null-transport rejected, invalid
+  lease/timeout rejected, server-side lease override adopted.
 - **`WsTransportTest`** - loopback WebSocket integration via a small
   test-only RFC 6455 server (`LoopbackWebSocketServer`, ~250 LOC
   under `src/test/java/`, still no third-party dep). Covers: binary
