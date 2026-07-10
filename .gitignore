@@ -13,3 +13,6 @@ target/
 # OS
 .DS_Store
 Thumbs.db
+
+# Shade plugin artefact - regenerated on each `mvn package`
+dependency-reduced-pom.xml
