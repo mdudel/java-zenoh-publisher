@@ -1,8 +1,21 @@
 # samples/
 
-Independently buildable examples that use the `ZenohClient` starter
-kit. Each subfolder is a complete Maven project: `cd` into it,
-`mvn package`, and you have a runnable fat jar.
+Independently buildable examples. Each subfolder is a complete Maven
+project: `cd` into it, `mvn package`, and you have a runnable fat
+jar.
+
+Two families:
+
+- **JNI samples** use the `ZenohClient` starter kit from the parent
+  module (backed by `zenoh-java-1.9.0`'s bundled Rust JNI). Fat jars
+  are ~30 MB and include the native libraries.
+- **Pure-Java samples** use the sibling
+  [`pure-java/`](../pure-java/) module (zero runtime deps, JDK 17
+  stdlib only). Fat jars are 90–160 KB. They need a one-time
+  `mvn install` of the pure-Java module first — see
+  [Building pure-Java samples](#building-pure-java-samples).
+
+## JNI samples (using the `ZenohClient` starter kit)
 
 | Sample                    | What it shows                                              |
 |---------------------------|------------------------------------------------------------|
@@ -12,19 +25,57 @@ kit. Each subfolder is a complete Maven project: `cd` into it,
 | [`mtls-publisher/`](mtls-publisher/)               | TLS + mutual authentication (client cert + key). |
 | [`cot-streaming-publisher/`](cot-streaming-publisher/) | Background-thread streaming, configurable TTL / rate / tracks, small CoT XML payloads. |
 
-## Building a sample
+## Pure-Java samples (using `pure-java/` — zero runtime deps)
+
+| Sample                    | What it shows                                              |
+|---------------------------|------------------------------------------------------------|
+| [`pure-java-simple-publisher/`](pure-java-simple-publisher/) | Minimum-viable pure-Java publisher. Pair with `pure-java-simple-subscriber/`. |
+| [`pure-java-simple-subscriber/`](pure-java-simple-subscriber/) | Minimum-viable pure-Java subscriber with wildcard key support. |
+| [`pure-java-mtls-publisher/`](pure-java-mtls-publisher/) | Drop-in sibling of the JNI `mtls-publisher` — same positional args, TLS + mTLS via PEM or PKCS12. |
+| [`pure-java-mtls-subscriber/`](pure-java-mtls-subscriber/) | mTLS-authenticated pure-Java subscriber. Pair with the mTLS publisher for an end-to-end secure demo. |
+| [`pure-java-scout/`](pure-java-scout/) | UDP-multicast discovery of Zenoh routers / peers on the local segment. Live ANSI table or `--json` stream. Never opens a session. |
+
+## Building a JNI sample
 
 ```bash
 cd samples/<sample-name>
 mvn package
 ```
 
-No setup step required. Every sample resolves the parent
+No setup step required. Every JNI sample resolves the parent
 `io.mdudel:java-zenoh-publisher` artifact directly from
 `vendor/repo/io/mdudel/java-zenoh-publisher/`, which is checked
 into this repo alongside the vendored `zenoh-java` and
 `kotlin-stdlib` jars. `git clone && cd samples/<name> && mvn package`
 works against a fresh checkout with nothing else installed.
+
+## Building pure-Java samples
+
+One-time install of the pure-Java module into your local
+`~/.m2/repository`:
+
+```bash
+# From the repo root:
+mvn -f pure-java/pom.xml install
+```
+
+Then the sample:
+
+```bash
+cd samples/pure-java-<sample-name>
+mvn package
+```
+
+> **After a `git pull`**: re-run the `mvn install` above before
+> rebuilding a pure-Java sample. Otherwise you'll get
+> `cannot find symbol: class PureJava<Thing>` when the pure-Java
+> module has grown a new public class since your last install — the
+> .m2 jar is invisible and goes stale silently. This bit us on
+> Turn G7; the reminder is now in every pure-Java sample's README.
+
+Pure-Java sample fat jars land in `target/pure-java-<name>-0.1.0.jar`
+at 90–160 KB (no shaded natives). They run on any JDK 17+ on any
+architecture.
 
 If you are actively editing the starter kit itself, rebuild the
 parent from the repo root (`mvn package`) to refresh the vendored

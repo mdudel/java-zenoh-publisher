@@ -225,20 +225,33 @@ resolve the starter kit directly from `vendor/repo/`, which is
 kept in sync with `src/` by the parent build's `package` phase.
 See [`samples/README.md`](samples/README.md) for the full recipe.
 
-## Sibling module: pure-Java publisher (MVP, in progress)
+## Sibling module: pure-Java client (publisher + subscriber + scout)
 
 A parallel implementation under [`pure-java/`](pure-java/) is a
-**pure-Java** publisher for the Zenoh 1.x wire protocol - no JNI,
-no native binaries, zero runtime dependencies beyond the JDK. It
-is being built for environments where the ~28 MB Rust-compiled
-`libzenoh_jni.{so,dll,dylib}` bundled inside `zenoh-java` is a
-blocker (security accreditation without matching source, non-x86_64
-platforms, etc.).
+**pure-Java** Zenoh 1.x client — no JNI, no native binaries, zero
+runtime dependencies beyond the JDK. Built for environments where
+the ~28 MB Rust-compiled `libzenoh_jni.{so,dll,dylib}` bundled
+inside `zenoh-java` is a blocker (security accreditation without
+matching source, non-x86_64 platforms, etc.).
 
-Status today: **MVP scaffolding**. Wire codec primitives (VarInt,
-KeyExpr resolver) are done; session/transport/wire messages come
-in follow-up commits. See [`pure-java/README.md`](pure-java/README.md)
-for the roadmap.
+Status today: **functional and interop-verified**. Three public
+facades:
+
+- [`PureJavaZenohPublisher`](pure-java/src/main/java/io/mdudel/zenoh/purejava/PureJavaZenohPublisher.java)
+  — open a session and publish (TCP / TLS / WS / WSS, mTLS via PEM or PKCS12).
+- [`PureJavaZenohSubscriber`](pure-java/src/main/java/io/mdudel/zenoh/purejava/PureJavaZenohSubscriber.java)
+  — subscribe with wildcard key expressions; pull or push (callback) delivery.
+- [`PureJavaZenohScout`](pure-java/src/main/java/io/mdudel/zenoh/purejava/scouting/PureJavaZenohScout.java)
+  — passive or active UDP-multicast discovery of routers / peers on
+  the local segment. **Never opens a session.** Two modes, callback
+  API AND snapshot API on the same instance.
+
+Publisher and subscriber are validated end-to-end against production
+`zenohd` v1.7.2 under mTLS in both directions (see
+[`docs/mtls-smoke-test.md`](docs/mtls-smoke-test.md)); scout has its
+own smoke test at [`docs/scout-smoke-test.md`](docs/scout-smoke-test.md).
+See [`pure-java/README.md`](pure-java/README.md) for the full roadmap,
+test inventory, and API details.
 
 ## Platform support
 

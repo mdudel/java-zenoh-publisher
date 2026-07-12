@@ -1,39 +1,40 @@
 # java-zenoh-publisher-pure
 
-**Pure-Java** publisher client for the Eclipse Zenoh 1.x wire protocol.
-No JNI. No native binaries. Zero runtime dependencies beyond JDK 17.
+**Pure-Java** publisher, subscriber, **and scouting client** for the
+Eclipse Zenoh 1.x wire protocol. No JNI. No native binaries. Zero
+runtime dependencies beyond JDK 17.
 
 Sibling module to the JNI-backed
-[`java-zenoh-publisher`](../) in the same repo. Both expose (or will
-expose) the same builder API, so switching between them at a call
-site is a one-line change.
+[`java-zenoh-publisher`](../) in the same repo. Both expose the same
+builder API for publish / subscribe, so switching between them at a
+call site is a one-line change.
 
-## Status: functional publisher (0.0.1-SNAPSHOT)
+## Status: functional and interop-verified (0.0.1-SNAPSHOT)
 
-**Working.** As of Turn E, the publisher is end-to-end functional:
-facade &rarr; session (handshake, KEEP_ALIVE, lease watchdog) &rarr;
-transport (TCP / TLS / WS / WSS) &rarr; wire codec. See
-[`../samples/pure-java-simple-publisher/`](../samples/pure-java-simple-publisher/)
-for a runnable minimal example.
+**Working end-to-end against production `zenohd` v1.7.2 in both
+directions under mTLS**, plus a passive/active multicast scouting
+listener that never opens a session.
+
+Three public facades in this module today:
+
+| Facade | Package | Purpose |
+|---|---|---|
+| [`PureJavaZenohPublisher`](src/main/java/io/mdudel/zenoh/purejava/PureJavaZenohPublisher.java) | `io.mdudel.zenoh.purejava` | Open a session and publish under a key expression. |
+| [`PureJavaZenohSubscriber`](src/main/java/io/mdudel/zenoh/purejava/PureJavaZenohSubscriber.java) | `io.mdudel.zenoh.purejava` | Open a session and subscribe with wildcard key expressions; pull or push (callback) delivery. |
+| [`PureJavaZenohScout`](src/main/java/io/mdudel/zenoh/purejava/scouting/PureJavaZenohScout.java) | `io.mdudel.zenoh.purejava.scouting` | Passive or active UDP-multicast discovery of Zenoh routers / peers on the local segment. **Never opens a session.** |
+
+Runnable minimal examples for each:
+[`pure-java-simple-publisher/`](../samples/pure-java-simple-publisher/),
+[`pure-java-simple-subscriber/`](../samples/pure-java-simple-subscriber/),
+[`pure-java-scout/`](../samples/pure-java-scout/).
+mTLS variants:
+[`pure-java-mtls-publisher/`](../samples/pure-java-mtls-publisher/),
+[`pure-java-mtls-subscriber/`](../samples/pure-java-mtls-subscriber/).
 
 _Historical note: earlier snapshots of this file said_ "MVP
-scaffolding, not yet functional" — that's obsolete as of Turn E.
+scaffolding, not yet functional" — that's obsolete since Turn E.
 
-The original scaffolding shipped in Turn A:
-
-- Module skeleton (`pom.xml`, package layout, license)
-- The public `PureJavaZenohPublisher` API surface with builder,
-  lifecycle methods, and getters - matches the shape of the sibling
-  `io.mdudel.zenoh.ZenohClient` for drop-in swappability
-- `wire.VarInt` - unsigned LEB128 codec, fully implemented + tested
-- `wire.KeyExpr` - org-prefix key resolver, ported verbatim from
-  the JNI publisher so effective keys are byte-identical
-
-As of Turn E, `.start()` opens a real session and `.publish(...)`
-delivers real Zenoh frames to a real router. The Turn A stubs
-are gone.
-
-Roadmap for follow-up turns:
+Roadmap:
 
 | Turn | Adds |
 |------|------|
@@ -45,8 +46,20 @@ Roadmap for follow-up turns:
 | **C2 (done)** | TLS + optional mTLS via `javax.net.ssl.SSLSocket`, hostname verification on by default, `TlsConfig` builder |
 | **C3 (done)** | WS + WSS via `java.net.http.WebSocket` (JDK stdlib), fragmented-message reassembly, TLS via shared `TlsConfig` |
 | **D (done)**  | `ZenohSession` state machine (CREATED→CONNECTING→OPENING→OPEN→CLOSING→CLOSED) + INIT/OPEN handshake ceremony + KEEP_ALIVE scheduler + lease-expiry watchdog + graceful CLOSE emission |
-| **E (this)**  | `PureJavaZenohPublisher` wired to `ZenohSession` + endpoint parser (tcp/tls/ws/wss) + runnable CLI + `samples/pure-java-simple-publisher/` |
-| **F**         | End-to-end interop verification against a real `zenohd` (needs a pcap capture) |
+| **E (done)**  | `PureJavaZenohPublisher` wired to `ZenohSession` + endpoint parser (tcp/tls/ws/wss) + runnable CLI + `samples/pure-java-simple-publisher/` |
+| **E+PEM (done)** | `PemLoader` + `TlsConfig.trustStorePem` + `keyStorePem`; publisher facade auto-detects PEM vs PKCS12 by extension; PKCS#1 legacy keys auto-wrapped in PKCS#8 in-memory. Drop-in swap with JNI facade's mTLS args. |
+| **E+mTLS (done)** | [`samples/pure-java-mtls-publisher/`](../samples/pure-java-mtls-publisher/) — sibling of the JNI `mtls-publisher` with identical positional-arg contract. Runnable ~95 KB fat jar. |
+| **F (done)** | **Interop verified end-to-end against production `zenohd` v1.7.2 under mTLS.** JNI and pure-Java publishers both authenticated as `Common Name: client`; wire-level byte interop confirmed with no pcap analysis needed. See [`docs/mtls-smoke-test.md`](../docs/mtls-smoke-test.md). |
+| **G1 (done)** | `KeyExpr` wildcard matching + intersection (subscriber prep). Faithful port of Zenoh's ClassicIntersector. |
+| **G2 (done)** | DECLARE + DeclareSubscriber + UndeclareSubscriber wire messages with Body union + RAW forward-compat. |
+| **G3 (done)** | Session inbound routing + `Sample` record + `Subscription` handle (pull + push APIs). |
+| **G4 (done)** | `PureJavaZenohSubscriber` facade mirroring publisher's builder + endpoint parser + PEM/PKCS12 TLS. |
+| **G5 (done)** | [`samples/pure-java-simple-subscriber/`](../samples/pure-java-simple-subscriber/) runnable fat jar. |
+| **G6 (done)** | INTEREST wire message (id 0x19, 4 modes) + topic discovery API (`declareInterest` / `discoverTopics` / `discoverAllTopics`). |
+| **G7 (done)** | [`samples/pure-java-mtls-subscriber/`](../samples/pure-java-mtls-subscriber/) sample + `docs/mtls-smoke-test.md` extended with a full pure-Java-subscriber section. **Verified end-to-end against `zenohd` v1.7.2 — mTLS wire interop in BOTH DIRECTIONS.** |
+| **H1 (done)** | Scouting wire codec: `Scout` (id 0x01 in scouting id-space), `Hello` (id 0x02), `WhatAmIMatcher` (SCOUT's 3-bit role bitmap, distinct from HELLO/INIT/OPEN's 2-bit `WhatAmI`). |
+| **H2 (done)** | `PureJavaZenohScout` facade in new `io.mdudel.zenoh.purejava.scouting` package. Two modes (PASSIVE / ACTIVE, default ACTIVE). Multi-NIC auto-discovery. Callback API (`ScoutListener`) AND pull API (`snapshot()` / `get(zid)`). Stale-sweeper with per-node `onExpire`. Never opens a session. |
+| **H3 (done)** | [`samples/pure-java-scout/`](../samples/pure-java-scout/) runnable ~160 KB fat jar with live ANSI table and `--json` stream output modes + [`docs/scout-smoke-test.md`](../docs/scout-smoke-test.md). |
 
 ## Why this module exists
 
@@ -67,7 +80,7 @@ This module trades those constraints for a smaller feature set (only
 publish, only TCP/TLS/WSS, only Zenoh 1.x client mode). If those
 tradeoffs are wrong for your use case, use the JNI-backed sibling.
 
-## Supported transports (planned)
+## Supported transports
 
 | Endpoint         | Transport                | Deps                        |
 |------------------|--------------------------|-----------------------------|
@@ -75,6 +88,7 @@ tradeoffs are wrong for your use case, use the JNI-backed sibling.
 | `tls/host:port`  | TLS + optional mTLS      | JDK only (`javax.net.ssl.SSLSocket`) |
 | `wss/host:port`  | WebSocket over TLS       | JDK only (`java.net.http.WebSocket`) |
 | `ws/host:port`   | WebSocket plaintext      | JDK only (same, freebie) |
+| _scouting_       | UDP multicast (`224.0.0.224:7446` by default) | JDK only (`java.net.MulticastSocket`). Not a session transport — used by `PureJavaZenohScout` for discovery only. |
 
 **TLS key material**: both **PEM** (`rootCa.pem` + `client.pem` + `client.key`)
 and **PKCS12** (`*.p12` / `*.pfx`) are accepted; the file extension
@@ -90,10 +104,13 @@ conversion command.
 
 **Deferred / out of scope**:
 
-- **UDP** - Zenoh's UDP transport uses a distinct framing model.
-  Marginal value for a publisher-only client; will land after the
-  subscriber follow-up if there is real demand.
-- **QUIC** - No pure-Java QUIC in JDK 17. The best pure-Java
+- **UDP session transport** — Zenoh's UDP session transport uses a
+  distinct framing model from the stream transports above. Marginal
+  value for a client-mode publisher; will land only if there is real
+  demand. Note: this is the *session* transport. UDP multicast for
+  **scouting** is fully supported via `PureJavaZenohScout` — see
+  [Scouting / discovery](#scouting--discovery) below.
+- **QUIC** — No pure-Java QUIC in JDK 17. The best pure-Java
   option is [Kwik](https://github.com/ptrd/kwik) (~40k LOC third-
   party dependency, Apache-2.0). Deferred deliberately to keep the
   core module's dependency count at zero. If QUIC becomes a hard
@@ -110,6 +127,95 @@ conversion command.
 | Runtime deps | **Zero.** JDK 17 stdlib only. Test scope: JUnit 5. |
 | License    | Apache 2.0. Clean-room implementation of the Eclipse Zenoh 1.x public wire protocol; not derived from any Zenoh source code. |
 
+## Scouting / discovery
+
+`PureJavaZenohScout` in package `io.mdudel.zenoh.purejava.scouting`
+is a passive/active UDP-multicast listener that discovers Zenoh
+routers and peers on the local segment **without ever opening a
+session**. It joins the multicast group (default `224.0.0.224:7446`),
+decodes any HELLO frames it sees, and optionally emits SCOUT frames
+to prod silent nodes into replying.
+
+**Not a node, not a peer, not a router.** The scout never sends
+INIT, never opens TCP/TLS/WS, and does not appear as a session on
+routers it discovers. Routers see (at most) an anonymous source of
+SCOUT queries — or nothing at all in passive mode.
+
+### Two modes
+
+| Mode | What it does |
+|---|---|
+| `Mode.ACTIVE` (default) | Listen AND emit a SCOUT every `scoutIntervalMillis` (default 3 s). Matches the `zenoh scout` CLI. Active always includes listening — SCOUT replies arrive on the same socket. |
+| `Mode.PASSIVE` | Listen only. Some routers auto-advertise via periodic multicast HELLO, so passive discovery still works, just slower and only for actively-broadcasting nodes. |
+
+### Two APIs on one instance
+
+Both are always available on the same scout — pick whichever fits
+your UI model, or use both together:
+
+- **Callback API** — register a
+  [`ScoutListener`](src/main/java/io/mdudel/zenoh/purejava/scouting/ScoutListener.java)
+  and get `onDiscover(node)` / `onUpdate(prev, now)` / `onExpire(node)`.
+  Callbacks fire under the registry lock so per-ZID event streams are
+  totally ordered. All three methods are default no-ops — override
+  only what you need.
+- **Snapshot API** — call `scout.snapshot()` for the current registry
+  as an immutable, first-seen-ordered list; `scout.get(zid)` for a
+  point lookup. Safe from any thread.
+
+### DiscoveredNode
+
+Each discovered node is a
+[`DiscoveredNode`](src/main/java/io/mdudel/zenoh/purejava/scouting/DiscoveredNode.java)
+record carrying `zid` (ZenohID), `role` (Router/Peer/Client),
+`locators` (endpoint strings like `tcp/host:7447`, `tls/host:7449`),
+the UDP `source` address the HELLO arrived from, `protocolVersion`,
+and `firstSeen` / `lastSeen` timestamps. `bestLocator()` returns the
+first explicit locator or a synthesised `tcp/<source-host>:7447`
+fallback — handy for piping a scout hit straight into
+`PureJavaZenohPublisher.connectEndpoint(...)`.
+
+### Minimum viable use
+
+```java
+try (PureJavaZenohScout scout = PureJavaZenohScout.builder()
+        .mode(PureJavaZenohScout.Mode.ACTIVE)          // default
+        .scoutIntervalMillis(3_000)                    // default
+        .staleTimeoutMillis(15_000)                    // default
+        .role(WhatAmI.ROUTER)                          // filter (default: all)
+        // .networkInterface("eth0")                    // optional; else auto-detect
+        .listener(new ScoutListener() {
+            @Override public void onDiscover(DiscoveredNode n) {
+                log.info("+ {} {} at {}", n.role(), n.zid(), n.bestLocator());
+            }
+            @Override public void onExpire(DiscoveredNode n) {
+                log.info("- {} gone", n.zid());
+            }
+        })
+        .build()) {
+
+    scout.start();
+
+    // Any time later, pull the current registry
+    for (DiscoveredNode n : scout.snapshot()) {
+        System.out.println(n.role() + " " + n.zid() + " " + n.locators());
+    }
+
+    scout.scoutNow();               // force one SCOUT now, ignoring interval
+    Thread.sleep(30_000);
+}
+```
+
+Runnable CLI wrapper:
+[`samples/pure-java-scout/`](../samples/pure-java-scout/) — live ANSI
+table by default, `--json` for machine-readable stream, `--roles=`,
+`--mode=passive|active`, `--nic=`, `--duration-s=`. See the sample's
+README for the full flag list and the environment gotchas (spoiler:
+127.0.0.1 doesn't carry multicast on any OS; bind to a real NIC).
+
+End-to-end smoke test walkthrough:
+[`docs/scout-smoke-test.md`](../docs/scout-smoke-test.md).
+
 ## Building
 
 ```bash
@@ -118,17 +224,8 @@ mvn clean package
 ```
 
 Produces `target/java-zenoh-publisher-pure-0.0.1-SNAPSHOT.jar` (a
-few tens of KB - notice how small a jar with no shaded dependencies
+few tens of KB — notice how small a jar with no shaded dependencies
 actually is).
-
-Run the CLI stub:
-
-```bash
-java -jar target/java-zenoh-publisher-pure-0.0.1-SNAPSHOT.jar
-```
-
-Right now that just prints a status message and points at this
-README.
 
 ## Running the tests
 
@@ -256,6 +353,64 @@ The tests cover:
   construction, double-`connect()` rejected, multi-frame in-order
   delivery.
 
+Turns G1–G7 added the subscriber path:
+
+- **`KeyExprTest`** (G1) extended with wildcard matching and
+  intersection cases (`sensors/*/temp`, `sensors/**`, `**`,
+  sub-chunk `log/$*Error`), faithful to Zenoh's `ClassicIntersector`
+  semantics so subscriber-side routing matches upstream byte-for-byte.
+- **`DeclareTest`** / **`DeclareSubscriberTest`** /
+  **`UndeclareSubscriberTest`** (G2) cover the DECLARE network
+  message, its Body union, and RAW forward-compat handling of
+  unknown declare bodies.
+- **`SubscriptionTest`** (G3) exercises the inbound routing pipeline,
+  `Sample` record shape, pull-model `take()` / `poll(timeout)`, and
+  push-model `forEach(consumer)` on a daemon thread.
+- **`PureJavaZenohSubscriberTest`** (G4) mirrors the publisher
+  facade's E2E test surface for the subscriber: endpoint parser
+  (tcp/tls/ws/wss), TLS via both PEM and PKCS12, wildcard subscribes,
+  lifecycle idempotency, invalid-endpoint rejections.
+- **`InterestTest`** / **`TopicDiscoveryTest`** (G6) cover the
+  INTEREST wire message (id 0x19, 4 modes: current-future, current,
+  future, aggregate) and the `declareInterest` /
+  `discoverTopics(prefix)` / `discoverAllTopics()` API. Session
+  inbound dispatcher fans DECLARE messages out to the right interest
+  id — pinned by a test that would fail with the pre-fix
+  `subscriptions.isEmpty()` short-circuit still in place.
+
+Turn H added the scouting path:
+
+- **`WhatAmIMatcherTest`** — SCOUT-side 3-bit role bitmap
+  (`Router=0b001 | Peer=0b010 | Client=0b100`), distinct from
+  `WhatAmI`'s 2-bit ordinal encoding used in HELLO/INIT/OPEN. Tests
+  each single role, `any()`, `of(EnumSet)` OR-ing, empty rejection,
+  the reserved-bits-only rejection, and equality.
+- **`ScoutTest`** — hand-crafted byte-position assertions against
+  the reference ASCII diagram in `commons/zenoh-protocol/src/scouting/scout.rs`:
+  header id + Z flag, flags byte packing `zid_len|I|what`, ZID nibble
+  encoding, extension chain gating, refusal of wrong id / all-reserved
+  role bits, roundtrip both with and without ZID.
+- **`HelloTest`** — header id + L + Z flags, `zid_len|X|X|wai` body
+  byte, ZID always present (no `I` flag in HELLO), locator list as
+  varint count + `<utf8;u8>` entries (the outer count is a varint,
+  not a z8 — verified from `commons/zenoh-codec/src/core/locator.rs`),
+  L=0 case yields empty locators (implicit locator = UDP source),
+  roundtrip with mixed locators + extensions, overlong-locator
+  rejection.
+- **`PureJavaZenohScoutTest`** — registry semantics via a
+  package-private `handleHello()` hook so no real socket is needed:
+  first HELLO fires `onDiscover`, subsequent HELLOs fire `onUpdate`
+  and preserve `firstSeen`, matcher filter drops non-matching roles
+  on the inbound path, `snapshot()` returns an immutable first-seen-
+  ordered copy, stale-sweep evicts and fires `onExpire`, listener
+  exceptions do not break other listeners, `bestLocator()` prefers
+  explicit locators and falls back to a synthesised tcp/source form,
+  double-`start()` rejected, double-`close()` no-ops.
+- **`PureJavaZenohScoutIntegrationTest`** — real multicast against
+  the first suitable NIC; uses JUnit `Assumptions` to skip cleanly
+  on locked-down networks (K8s pods with /32 netmasks, hardened
+  bastions blocking IGMP) rather than error.
+
 ## Bridging logs
 
 By default the publisher writes to `java.lang.System.Logger`, which the
@@ -290,12 +445,13 @@ the default `java.util.logging` backend without touching anything.
 ## Non-goals (permanent, not "yet")
 
 - Full Zenoh peer / router modes. This is a **client-mode publisher
-  only**. Ever.
-- Wildcard-intersect key matching. Publishers publish under concrete
-  keys; matching is a subscriber-side concern.
+  + subscriber + passive discovery listener only**. Ever. The scout
+  observes multicast HELLOs but never joins the mesh as a peer.
 - Zenoh Storages, Queryables, Liveliness tokens.
 - Wire protocol version negotiation across pre-1.x Zenoh routers.
   1.x only.
+- Gossip discovery (peers forwarding hearsay about other peers).
+  The scout parses direct multicast HELLOs only.
 
 ## Not the same jar as the JNI publisher
 
@@ -305,8 +461,10 @@ Different Maven coordinates so they can coexist:
 |------------------------|--------------------------------------------|----------------------------------------------|
 | `groupId`              | `io.mdudel`                                | `io.mdudel`                                  |
 | `artifactId`           | `java-zenoh-publisher`                     | `java-zenoh-publisher-pure`                  |
-| Class                  | `io.mdudel.zenoh.ZenohClient`              | `io.mdudel.zenoh.purejava.PureJavaZenohPublisher` |
+| Publish class          | `io.mdudel.zenoh.ZenohClient`              | `io.mdudel.zenoh.purejava.PureJavaZenohPublisher` |
+| Subscribe class        | — (JNI Session-declared directly)         | `io.mdudel.zenoh.purejava.PureJavaZenohSubscriber` |
+| Scouting class         | —                                          | `io.mdudel.zenoh.purejava.scouting.PureJavaZenohScout` |
 | Runtime deps           | zenoh-java 1.9.0, kotlin-stdlib 1.9.10     | none                                         |
-| Fat jar size           | ~30 MB                                     | expected < 200 KB                            |
+| Fat jar size           | ~30 MB                                     | ~60 KB module; samples ~90–160 KB shaded     |
 | Platform               | x86_64 linux-gnu / apple-darwin / win-msvc | any JDK 17                                   |
 | Native binaries        | `libzenoh_jni.{so,dylib,dll}` bundled      | none                                         |

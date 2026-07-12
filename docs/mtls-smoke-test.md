@@ -697,3 +697,13 @@ publisher's message on its stdout, you've validated:
 - **Wire-level interoperability in BOTH DIRECTIONS** between the pure-Java implementation and production `zenohd` v1.7.2 — the highest-fidelity interop check possible short of a multi-router federation test.
 
 The pure-Java module has **zero third-party runtime dependencies**; everything above works with JDK 17+ stdlib only.
+
+## See also
+
+- [`scout-smoke-test.md`](./scout-smoke-test.md) — sibling walkthrough
+  for the `PureJavaZenohScout` discovery listener. Uses the same
+  `zenohd` router set up here, but verifies the multicast SCOUT /
+  HELLO control plane instead of the session data plane. Never opens
+  a TCP/TLS session against the router — useful for validating that
+  a router is advertising itself correctly on the local segment even
+  in environments where session traffic is firewalled off.
