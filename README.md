@@ -30,6 +30,17 @@ the first run.
 
 ---
 
+## API docs
+
+HTML Javadoc is regenerated on every push to `main` and published to
+GitHub Pages:
+
+- **Landing page (both modules)**: https://mdudel.github.io/java-zenoh-publisher/
+- **JNI publisher** (`io.mdudel.zenoh.ZenohClient` and friends): https://mdudel.github.io/java-zenoh-publisher/jni/
+- **Pure-Java client** (`io.mdudel.zenoh.purejava.*` — publisher, subscriber, scout): https://mdudel.github.io/java-zenoh-publisher/pure-java/
+
+The generator is [.github/workflows/javadoc.yml](.github/workflows/javadoc.yml).
+
 ## Quickstart (5 minutes)
 
 ### 1. Build
