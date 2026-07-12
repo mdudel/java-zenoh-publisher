@@ -31,36 +31,6 @@ mTLS variants:
 [`pure-java-mtls-publisher/`](../samples/pure-java-mtls-publisher/),
 [`pure-java-mtls-subscriber/`](../samples/pure-java-mtls-subscriber/).
 
-_Historical note: earlier snapshots of this file said_ "MVP
-scaffolding, not yet functional" — that's obsolete since Turn E.
-
-Roadmap:
-
-| Turn | Adds |
-|------|------|
-| **A (done)**  | Scaffolding, VarInt, KeyExpr, API surface, tests |
-| **B1 (done)** | Codec primitives (WBuf, RBuf, ZenohId, Extension chain, WhatAmI) + INIT message |
-| **B2 (done)** | OPEN, CLOSE, KEEP_ALIVE transport messages |
-| **B3 (done)** | FRAME transport message + PUSH network carrier + PUT zenoh payload + Encoding + Timestamp |
-| **C1 (done)** | Plain TCP transport with 2-byte LE stream framing + one reader thread per link |
-| **C2 (done)** | TLS + optional mTLS via `javax.net.ssl.SSLSocket`, hostname verification on by default, `TlsConfig` builder |
-| **C3 (done)** | WS + WSS via `java.net.http.WebSocket` (JDK stdlib), fragmented-message reassembly, TLS via shared `TlsConfig` |
-| **D (done)**  | `ZenohSession` state machine (CREATED→CONNECTING→OPENING→OPEN→CLOSING→CLOSED) + INIT/OPEN handshake ceremony + KEEP_ALIVE scheduler + lease-expiry watchdog + graceful CLOSE emission |
-| **E (done)**  | `PureJavaZenohPublisher` wired to `ZenohSession` + endpoint parser (tcp/tls/ws/wss) + runnable CLI + `samples/pure-java-simple-publisher/` |
-| **E+PEM (done)** | `PemLoader` + `TlsConfig.trustStorePem` + `keyStorePem`; publisher facade auto-detects PEM vs PKCS12 by extension; PKCS#1 legacy keys auto-wrapped in PKCS#8 in-memory. Drop-in swap with JNI facade's mTLS args. |
-| **E+mTLS (done)** | [`samples/pure-java-mtls-publisher/`](../samples/pure-java-mtls-publisher/) — sibling of the JNI `mtls-publisher` with identical positional-arg contract. Runnable ~95 KB fat jar. |
-| **F (done)** | **Interop verified end-to-end against production `zenohd` v1.7.2 under mTLS.** JNI and pure-Java publishers both authenticated as `Common Name: client`; wire-level byte interop confirmed with no pcap analysis needed. See [`docs/mtls-smoke-test.md`](../docs/mtls-smoke-test.md). |
-| **G1 (done)** | `KeyExpr` wildcard matching + intersection (subscriber prep). Faithful port of Zenoh's ClassicIntersector. |
-| **G2 (done)** | DECLARE + DeclareSubscriber + UndeclareSubscriber wire messages with Body union + RAW forward-compat. |
-| **G3 (done)** | Session inbound routing + `Sample` record + `Subscription` handle (pull + push APIs). |
-| **G4 (done)** | `PureJavaZenohSubscriber` facade mirroring publisher's builder + endpoint parser + PEM/PKCS12 TLS. |
-| **G5 (done)** | [`samples/pure-java-simple-subscriber/`](../samples/pure-java-simple-subscriber/) runnable fat jar. |
-| **G6 (done)** | INTEREST wire message (id 0x19, 4 modes) + topic discovery API (`declareInterest` / `discoverTopics` / `discoverAllTopics`). |
-| **G7 (done)** | [`samples/pure-java-mtls-subscriber/`](../samples/pure-java-mtls-subscriber/) sample + `docs/mtls-smoke-test.md` extended with a full pure-Java-subscriber section. **Verified end-to-end against `zenohd` v1.7.2 — mTLS wire interop in BOTH DIRECTIONS.** |
-| **H1 (done)** | Scouting wire codec: `Scout` (id 0x01 in scouting id-space), `Hello` (id 0x02), `WhatAmIMatcher` (SCOUT's 3-bit role bitmap, distinct from HELLO/INIT/OPEN's 2-bit `WhatAmI`). |
-| **H2 (done)** | `PureJavaZenohScout` facade in new `io.mdudel.zenoh.purejava.scouting` package. Two modes (PASSIVE / ACTIVE, default ACTIVE). Multi-NIC auto-discovery. Callback API (`ScoutListener`) AND pull API (`snapshot()` / `get(zid)`). Stale-sweeper with per-node `onExpire`. Never opens a session. |
-| **H3 (done)** | [`samples/pure-java-scout/`](../samples/pure-java-scout/) runnable ~160 KB fat jar with live ANSI table and `--json` stream output modes + [`docs/scout-smoke-test.md`](../docs/scout-smoke-test.md). |
-
 ## Why this module exists
 
 The sibling `java-zenoh-publisher` module works, but bundles a
@@ -353,24 +323,24 @@ The tests cover:
   construction, double-`connect()` rejected, multi-frame in-order
   delivery.
 
-Turns G1–G7 added the subscriber path:
+Subscriber path:
 
-- **`KeyExprTest`** (G1) extended with wildcard matching and
+- **`KeyExprTest`** extended with wildcard matching and
   intersection cases (`sensors/*/temp`, `sensors/**`, `**`,
   sub-chunk `log/$*Error`), faithful to Zenoh's `ClassicIntersector`
   semantics so subscriber-side routing matches upstream byte-for-byte.
 - **`DeclareTest`** / **`DeclareSubscriberTest`** /
-  **`UndeclareSubscriberTest`** (G2) cover the DECLARE network
+  **`UndeclareSubscriberTest`** cover the DECLARE network
   message, its Body union, and RAW forward-compat handling of
   unknown declare bodies.
-- **`SubscriptionTest`** (G3) exercises the inbound routing pipeline,
+- **`SubscriptionTest`** exercises the inbound routing pipeline,
   `Sample` record shape, pull-model `take()` / `poll(timeout)`, and
   push-model `forEach(consumer)` on a daemon thread.
-- **`PureJavaZenohSubscriberTest`** (G4) mirrors the publisher
+- **`PureJavaZenohSubscriberTest`** mirrors the publisher
   facade's E2E test surface for the subscriber: endpoint parser
   (tcp/tls/ws/wss), TLS via both PEM and PKCS12, wildcard subscribes,
   lifecycle idempotency, invalid-endpoint rejections.
-- **`InterestTest`** / **`TopicDiscoveryTest`** (G6) cover the
+- **`InterestTest`** / **`TopicDiscoveryTest`** cover the
   INTEREST wire message (id 0x19, 4 modes: current-future, current,
   future, aggregate) and the `declareInterest` /
   `discoverTopics(prefix)` / `discoverAllTopics()` API. Session
@@ -378,7 +348,7 @@ Turns G1–G7 added the subscriber path:
   id — pinned by a test that would fail with the pre-fix
   `subscriptions.isEmpty()` short-circuit still in place.
 
-Turn H added the scouting path:
+Scouting path:
 
 - **`WhatAmIMatcherTest`** — SCOUT-side 3-bit role bitmap
   (`Router=0b001 | Peer=0b010 | Client=0b100`), distinct from

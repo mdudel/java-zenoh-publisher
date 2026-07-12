@@ -1,10 +1,18 @@
 # java-zenoh-publisher
 
-A minimal, standalone **native Zenoh publishing client** for the JVM,
-intended as a copy-and-hack **starter kit** for building your own
-custom Java Zenoh client.
+This project started life as **a minimal, standalone native Zenoh
+publishing client** for the JVM, extracted as a copy-and-hack
+**starter kit** for building your own custom Java Zenoh client.
 
-This was extracted from another project to distill the Zenoh Java Native Client so you get one small pure Java codebase you can easily leverage in your own Java projects:
+It has since grown to include a **subscriber** and a **scout**
+(passive/active multicast discovery of Zenoh routers and peers on
+the local segment), so the same starter now covers publish,
+subscribe and node-discovery use cases from one small codebase.
+The original publisher path is still intact and unchanged — the new
+additions live alongside it as separate facades you can pick up or
+ignore.
+
+The repo was extracted from another project to distill the Zenoh Java Native Client so you get one small pure Java codebase you can easily leverage in your own Java projects:
 
 * [`ZenohClient.java`](src/main/java/io/mdudel/zenoh/ZenohClient.java) —
   session + publisher lifecycle, TLS/mTLS config, org-prefix key
@@ -250,8 +258,8 @@ Publisher and subscriber are validated end-to-end against production
 `zenohd` v1.7.2 under mTLS in both directions (see
 [`docs/mtls-smoke-test.md`](docs/mtls-smoke-test.md)); scout has its
 own smoke test at [`docs/scout-smoke-test.md`](docs/scout-smoke-test.md).
-See [`pure-java/README.md`](pure-java/README.md) for the full roadmap,
-test inventory, and API details.
+See [`pure-java/README.md`](pure-java/README.md) for the test
+inventory and API details.
 
 ## Platform support
 

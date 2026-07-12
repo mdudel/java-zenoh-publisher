@@ -70,8 +70,8 @@ mvn package
 > rebuilding a pure-Java sample. Otherwise you'll get
 > `cannot find symbol: class PureJava<Thing>` when the pure-Java
 > module has grown a new public class since your last install — the
-> .m2 jar is invisible and goes stale silently. This bit us on
-> Turn G7; the reminder is now in every pure-Java sample's README.
+> .m2 jar is invisible and goes stale silently. Every pure-Java
+> sample's README repeats this reminder.
 
 Pure-Java sample fat jars land in `target/pure-java-<name>-0.1.0.jar`
 at 90–160 KB (no shaded natives). They run on any JDK 17+ on any

@@ -91,8 +91,8 @@ Perfect for piping into `jq`, a log aggregator, or a UI's SSE stream.
 
 ## Environment gotchas
 
-Same three that bit the ingest listener (memory of 2026-06-18) and
-will absolutely bite anyone running this for the first time:
+Three things that will bite anyone running multicast on the JVM for
+the first time:
 
 1. **127.0.0.1 does NOT carry multicast** on any OS — Linux, macOS,
    Windows all agree on this. If your router and this scout are on
