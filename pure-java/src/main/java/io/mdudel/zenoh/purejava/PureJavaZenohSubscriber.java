@@ -314,6 +314,170 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
         return discoverTopics("**", listener);
     }
 
+    // ----- topic listing (synchronous one-shot) ------------------------
+
+    /**
+     * A single topic entry as reported by the router in response to a
+     * one-shot {@link #listTopicsNow(String, long)} call. Backed by the
+     * key expression the router saw declared, plus the peer-local
+     * subscriber id the router associates with it.
+     *
+     * <p>{@code declaredById} is the id the declaring peer chose for its
+     * own subscription. It is only meaningful in the scope of the router
+     * that reported it, and is included here so callers can correlate
+     * later undeclare events (from {@link #discoverTopics}) with entries
+     * in an earlier snapshot. If you don't need the correlation, ignore
+     * the field.</p>
+     */
+    public record Topic(String keyExpr, long declaredById) {
+
+        /**
+         * Serialise a list of topics to a compact JSON array of
+         * {@code {"keyExpr":..., "declaredById":...}} objects. Uses only
+         * JDK APIs, in keeping with the pure-Java module's zero-runtime-
+         * dependency invariant. Suitable for piping into {@code jq}, an
+         * HTTP response, a log line, or a file.
+         */
+        public static String toJson(java.util.List<Topic> topics) {
+            java.util.Objects.requireNonNull(topics, "topics");
+            StringBuilder sb = new StringBuilder(64 + topics.size() * 48);
+            sb.append('[');
+            boolean first = true;
+            for (Topic t : topics) {
+                if (!first) sb.append(',');
+                first = false;
+                sb.append("{\"keyExpr\":\"");
+                escapeJson(sb, t.keyExpr());
+                sb.append("\",\"declaredById\":").append(t.declaredById()).append('}');
+            }
+            sb.append(']');
+            return sb.toString();
+        }
+
+        private static void escapeJson(StringBuilder sb, String s) {
+            if (s == null) return;
+            for (int i = 0, n = s.length(); i < n; i++) {
+                char c = s.charAt(i);
+                switch (c) {
+                    case '"'  -> sb.append("\\\"");
+                    case '\\' -> sb.append("\\\\");
+                    case '\b' -> sb.append("\\b");
+                    case '\f' -> sb.append("\\f");
+                    case '\n' -> sb.append("\\n");
+                    case '\r' -> sb.append("\\r");
+                    case '\t' -> sb.append("\\t");
+                    default -> {
+                        if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
+                        else          sb.append(c);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Synchronously ask the router for its current set of subscriber
+     * declarations matching a key-expression pattern, and return them as
+     * an ordered snapshot list. Blocks the calling thread until either
+     * the router replays its current state (a FINAL sentinel arrives) or
+     * {@code timeoutMs} elapses; on timeout, returns whatever has been
+     * collected so far rather than throwing.
+     *
+     * <p>Wire mechanism: sends an INTEREST in {@link Interest.Mode#CURRENT}
+     * mode with the SUBSCRIBERS option set. The interest self-terminates
+     * as soon as the router finishes replaying — no follow-up
+     * {@code FINAL} needs to be sent by the caller, and no future-mode
+     * updates will arrive after this method returns.</p>
+     *
+     * <h3>What this shows you (and what it does not)</h3>
+     * <p>The list contains one entry per subscription the router
+     * currently knows about that matches the pattern. If two peers have
+     * subscribed to the same key expression, you'll see two entries with
+     * the same {@code keyExpr} and different {@code declaredById}s. A
+     * key expression that has publishers but no subscribers does
+     * <b>not</b> appear here — the Zenoh 1.x wire protocol has no
+     * corresponding {@code DeclarePublisher} for the router to report,
+     * so publishers are effectively invisible to discovery. To catch
+     * traffic from publishers directly, subscribe to {@code **} with
+     * {@link #subscribeAndConsume} and inspect {@link Sample#key()}.</p>
+     *
+     * @param keyExprPattern KeyExpr pattern to filter on. Wildcards are
+     *                       welcome; pass {@code "**"} for everything.
+     * @param timeoutMs      maximum time to wait for the router's FINAL
+     *                       sentinel, in milliseconds. Must be positive.
+     * @return an immutable snapshot list, ordered by the sequence in
+     *         which the router reported entries. Empty if the router has
+     *         no matching subscribers, or if the timeout elapsed before
+     *         anything arrived.
+     * @throws IOException if the subscriber is not started, or the
+     *         underlying interest could not be sent.
+     */
+    public java.util.List<Topic> listTopicsNow(String keyExprPattern, long timeoutMs) throws IOException {
+        Objects.requireNonNull(keyExprPattern, "keyExprPattern");
+        if (timeoutMs <= 0) {
+            throw new IllegalArgumentException("timeoutMs must be > 0, got " + timeoutMs);
+        }
+        ZenohSession s = session;
+        if (s == null || s.state() != SessionState.OPEN) {
+            throw new IOException("PureJavaZenohSubscriber is not started");
+        }
+
+        java.util.List<Topic> collected = new CopyOnWriteArrayList<>();
+        CountDownLatch done = new CountDownLatch(1);
+
+        long interestId;
+        try {
+            interestId = s.declareInterest(Interest.Mode.CURRENT,
+                    Interest.OPT_SUBSCRIBERS, keyExprPattern,
+                    (declare, isFinal) -> {
+                        if (isFinal) {
+                            done.countDown();
+                            return;
+                        }
+                        Declare.Body body = declare.body();
+                        if (body.kind() == Declare.Body.BodyKind.DECLARE_SUBSCRIBER) {
+                            var ds = body.asDeclareSubscriber();
+                            String k = ds.keySuffix() == null ? "" : ds.keySuffix();
+                            collected.add(new Topic(k, ds.id()));
+                        }
+                    });
+        } catch (io.mdudel.zenoh.purejava.session.SessionException e) {
+            lastError = "listTopicsNow failed: " + e.getMessage();
+            throw new IOException(lastError, e);
+        }
+
+        boolean completed;
+        try {
+            completed = done.await(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            LOG.log(Level.DEBUG, () -> "listTopicsNow interrupted after "
+                    + collected.size() + " entries");
+            // Best-effort cleanup: FINAL the interest so the router
+            // stops sending. CURRENT-mode interests self-terminate on
+            // the router side once state replay completes, but if we're
+            // bailing out early it's polite to tell the router.
+            try { s.finalInterest(interestId); } catch (Exception ignored) {}
+            return java.util.List.copyOf(collected);
+        }
+
+        if (!completed) {
+            LOG.log(Level.DEBUG, () -> "listTopicsNow timed out after "
+                    + timeoutMs + "ms with " + collected.size()
+                    + " entries collected (no FINAL sentinel from router)");
+            try { s.finalInterest(interestId); } catch (Exception ignored) {}
+        }
+        return java.util.List.copyOf(collected);
+    }
+
+    /**
+     * Sugar: {@code listTopicsNow("**", timeoutMs)}. Snapshot every
+     * subscriber declaration the router currently knows about.
+     */
+    public java.util.List<Topic> listAllTopicsNow(long timeoutMs) throws IOException {
+        return listTopicsNow("**", timeoutMs);
+    }
+
     // ----- endpoint parsing + transport factory --------------------------
     // (Same logic as PureJavaZenohPublisher; kept in sync deliberately.
     //  A shared TransportFactory helper would be nicer -- see followup below.)
