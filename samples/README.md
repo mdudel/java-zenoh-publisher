@@ -34,6 +34,7 @@ Two families:
 | [`pure-java-mtls-publisher/`](pure-java-mtls-publisher/) | Drop-in sibling of the JNI `mtls-publisher` — same positional args, TLS + mTLS via PEM or PKCS12. |
 | [`pure-java-mtls-subscriber/`](pure-java-mtls-subscriber/) | mTLS-authenticated pure-Java subscriber. Pair with the mTLS publisher for an end-to-end secure demo. |
 | [`pure-java-scout/`](pure-java-scout/) | UDP-multicast discovery of Zenoh routers / peers on the local segment. Live ANSI table or `--json` stream. Never opens a session. |
+| [`pure-java-list-topics/`](pure-java-list-topics/) | One-shot lister for the subscriber topics currently known to a router. Table by default or `--json` for pipelines. |
 
 ## Building a JNI sample
 
