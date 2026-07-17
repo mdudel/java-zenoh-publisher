@@ -31,6 +31,93 @@ mTLS variants:
 [`pure-java-mtls-publisher/`](../samples/pure-java-mtls-publisher/),
 [`pure-java-mtls-subscriber/`](../samples/pure-java-mtls-subscriber/).
 
+## Quickstart (5 minutes)
+
+Unlike the JNI-backed sibling, the pure-java module itself is a
+**library only** — there is no `main()` in `java-zenoh-publisher-pure-*.jar`.
+The five-minute path is: install the library into your local Maven
+cache, then build and run one of the sample fat jars under
+[`samples/`](../samples/).
+
+### 1. Install the pure-java library into `~/.m2/repository`
+
+From the repo root:
+
+```bash
+mvn -f pure-java/pom.xml install
+```
+
+This produces `pure-java/target/java-zenoh-publisher-pure-0.0.1-SNAPSHOT.jar`
+(~60 KB, zero deps) and installs it locally so every sample under
+`samples/pure-java-*` can resolve it.
+
+> **After every `git pull`**: rerun `mvn -f pure-java/pom.xml install`
+> before rebuilding any sample. The Maven cache doesn't know the
+> source changed and will silently reuse the stale jar, giving you
+> `cannot find symbol: class PureJavaZenohSubscriber` (or similar)
+> when the pure-java module has grown a new public class.
+
+### 2. Build a sample fat jar
+
+Pick whichever sample matches what you want to prove:
+
+```bash
+# publisher
+cd samples/pure-java-simple-publisher && mvn -q package && cd -
+# subscriber
+cd samples/pure-java-simple-subscriber && mvn -q package && cd -
+# scout (multicast router discovery)
+cd samples/pure-java-scout && mvn -q package && cd -
+```
+
+Each produces a runnable shaded jar at
+`samples/<name>/target/<name>-0.1.0.jar` (60–160 KB depending on
+which pieces of the pure-java module get pulled in).
+
+### 3. Publish, subscribe, or scout
+
+Assuming a router at `tcp/localhost:7447` (the Zenoh default):
+
+```bash
+# Publish 5 messages to demo/greeting @ 1 Hz (defaults):
+java -jar samples/pure-java-simple-publisher/target/pure-java-simple-publisher-0.1.0.jar
+
+# Publish 10 messages to my/key @ 2 Hz on a remote router:
+java -jar samples/pure-java-simple-publisher/target/pure-java-simple-publisher-0.1.0.jar \
+    tcp/router.local:7447 my/key 10 500
+
+# Subscribe to everything under demo/** until Ctrl-C:
+java -jar samples/pure-java-simple-subscriber/target/pure-java-simple-subscriber-0.1.0.jar
+
+# Discover routers/peers on the local segment via multicast:
+java -jar samples/pure-java-scout/target/pure-java-scout-0.1.0.jar
+```
+
+Positional argument shape for publisher / subscriber:
+`<endpoint> <keyExpr> [count|timeoutSeconds] [intervalMs]`. Every
+positional arg is optional; defaults kick in from the left. Scout
+is flag-based — `--help` for the full list.
+
+On Windows / PowerShell drop the backslash continuations and put
+everything on one line:
+
+```powershell
+java -jar samples\pure-java-simple-publisher\target\pure-java-simple-publisher-0.1.0.jar tcp/router.local:7447 my/key 10 500
+```
+
+### 4. See it arrive
+
+Run the subscriber sample in one terminal and the publisher sample
+in another (both against the same router), or point either one at
+a real `zenohd`. Any Zenoh subscriber works — `z_sub -k 'demo/**'`
+(Rust CLI), Python `z_sub.py`, the JNI-backed `hello-subscriber`
+sample, whatever. It's just Zenoh 1.x on the wire.
+
+For mTLS end-to-end (both publisher and subscriber authenticating
+to a real `zenohd`), skip ahead to
+[`docs/mtls-smoke-test.md`](../docs/mtls-smoke-test.md) and use the
+`pure-java-mtls-*` samples instead.
+
 ## Why this module exists
 
 The sibling `java-zenoh-publisher` module works, but bundles a
