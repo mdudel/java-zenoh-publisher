@@ -1,153 +1,48 @@
 # STEPxSTEP: build a Zenoh subscriber with the pure-Java client
 
-A hands-on walkthrough. Empty directory in, running subscriber out.
-No JNI, no native binaries, no third-party runtime dependencies —
-JDK 17 and Maven are the only things you need on your machine.
+A hands-on walkthrough, from starting with an empty directory, to
+a running subscriber jar. It uses the "copy the sources into your
+own project" approach so that you end up with a completely
+self-contained build that has no third-party runtime dependencies
+of any kind beyond the JDK, which is usually what you want if
+you're reading this file.
 
-**What you'll end up with:**
+By the end you will have a small Maven project called
+`my-zenoh-subscriber` containing a single class `MySubscriber` that
+opens a session to a Zenoh router, subscribes to a key expression,
+and prints one line per received message. You'll also have a
+runnable jar you can hand to a colleague and expect them to be
+able to run with nothing more than a JDK 17 install.
 
-* A minimal Maven project called `my-zenoh-subscriber`
-* One class `MySubscriber` that connects to a Zenoh router,
-  subscribes to a key expression, and prints one line per received
-  message
-* A runnable fat jar you can `java -jar` against any Zenoh 1.x router
-
-**What this guide assumes you already have:**
-
-* JDK 17+ on your `PATH` (`java -version` and `javac -version` both
-  work)
-* Maven 3.6+ on your `PATH` (`mvn -v` works)
-* A running Zenoh router somewhere reachable, or the intent to start
-  one — [zenohd](https://github.com/eclipse-zenoh/zenoh/releases) or
-  `docker run --rm -it -p 7447:7447 eclipse/zenoh` both work
-
-If the router is on the same box, `tcp/localhost:7447` is the
-default endpoint and you can leave endpoints alone.
-
----
-
-## Step 0. Decide how to consume the pure-java client
-
-You have two options. Pick one and stick with it — the rest of the
-guide splits into a **Path A** and a **Path B** where they differ.
-
-| Option | When to use | Downside |
-|---|---|---|
-| **Path A — Maven dependency** (recommended) | You have `mvn install` access to your own Maven repo or `~/.m2/`, and you're happy pinning to a version. | Requires the pure-java jar to be resolvable by Maven at build time. |
-| **Path B — Copy the sources into your project** | Air-gapped build, must ship the source alongside your code for accreditation, want to fork and modify. | You own the sources now — updating means re-copying. |
-
-Both paths produce the same runtime behaviour. Path A is what most
-people should do.
+The only things you need on your machine before starting are a
+JDK 17 or newer (check with `java -version` and `javac -version`),
+Maven 3.6 or newer (check with `mvn -v`), and a Zenoh router
+somewhere reachable. If you don't already have a router, the
+easiest way to get one is `docker run --rm -it -p 7447:7447
+eclipse/zenoh`, which will bind the default Zenoh port on
+`localhost` and give you something to publish and subscribe
+against; alternatively, download a native `zenohd` binary from
+the [Zenoh releases page](https://github.com/eclipse-zenoh/zenoh/releases)
+and run it directly.
 
 ---
 
 ## Step 1. Create an empty Maven project
 
-Anywhere on disk:
+Pick a directory anywhere on disk and lay out the standard Maven
+skeleton:
 
 ```bash
 mkdir -p my-zenoh-subscriber/src/main/java/com/example
 cd my-zenoh-subscriber
 ```
 
-Create a `pom.xml` at the project root — **use the block that
-matches the path you picked in Step 0**.
-
-### Path A — `pom.xml` (Maven dependency)
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
-                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
-
-  <groupId>com.example</groupId>
-  <artifactId>my-zenoh-subscriber</artifactId>
-  <version>0.1.0</version>
-  <packaging>jar</packaging>
-
-  <properties>
-    <maven.compiler.source>17</maven.compiler.source>
-    <maven.compiler.target>17</maven.compiler.target>
-    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <main.class>com.example.MySubscriber</main.class>
-  </properties>
-
-  <dependencies>
-    <!-- The pure-Java Zenoh client. Zero transitive runtime deps. -->
-    <dependency>
-      <groupId>io.mdudel</groupId>
-      <artifactId>java-zenoh-publisher-pure</artifactId>
-      <version>0.0.1-SNAPSHOT</version>
-    </dependency>
-  </dependencies>
-
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.13.0</version>
-      </plugin>
-
-      <!-- Runnable fat jar. Puts Main-Class in the manifest and
-           shades the pure-java module into the final artifact. -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-shade-plugin</artifactId>
-        <version>3.5.1</version>
-        <executions>
-          <execution>
-            <phase>package</phase>
-            <goals><goal>shade</goal></goals>
-            <configuration>
-              <transformers>
-                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                  <mainClass>${main.class}</mainClass>
-                </transformer>
-                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
-              </transformers>
-              <filters>
-                <filter>
-                  <artifact>*:*</artifact>
-                  <excludes>
-                    <exclude>META-INF/*.SF</exclude>
-                    <exclude>META-INF/*.DSA</exclude>
-                    <exclude>META-INF/*.RSA</exclude>
-                  </excludes>
-                </filter>
-              </filters>
-              <finalName>${project.artifactId}-${project.version}-fat</finalName>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-    </plugins>
-  </build>
-</project>
-```
-
-Then **install the pure-java library into your local Maven cache**
-so the `<dependency>` block above can resolve it. From a clone of
-[`java-zenoh-publisher`](https://github.com/mdudel/java-zenoh-publisher):
-
-```bash
-git clone https://github.com/mdudel/java-zenoh-publisher.git
-cd java-zenoh-publisher
-mvn -f pure-java/pom.xml install
-cd -   # back to my-zenoh-subscriber
-```
-
-> **Every time you `git pull` the upstream repo, rerun
-> `mvn -f pure-java/pom.xml install`** before rebuilding your
-> project. Maven has no way to know the sources changed — it will
-> silently reuse the stale jar in `~/.m2/repository/` and give you
-> a bewildering `cannot find symbol: class X` for any class added
-> since your last install.
-
-### Path B — `pom.xml` (sources copied in)
+Create a `pom.xml` at the project root. Notice that there is no
+`<dependencies>` block at all: the pure-Java Zenoh client has zero
+third-party runtime dependencies, and we're about to copy its
+sources directly into `src/main/java`, so the JDK 17 standard
+library really is the only thing this project needs to compile
+and run.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -169,10 +64,6 @@ cd -   # back to my-zenoh-subscriber
     <main.class>com.example.MySubscriber</main.class>
   </properties>
 
-  <!-- No <dependencies> for Path B: the pure-java code will live
-       directly under src/main/java. JDK 17 stdlib is the only
-       runtime dependency, and that comes from the JRE. -->
-
   <build>
     <plugins>
       <plugin>
@@ -181,6 +72,13 @@ cd -   # back to my-zenoh-subscriber
         <version>3.13.0</version>
       </plugin>
 
+      <!-- Standard maven-jar-plugin, with Main-Class set on the
+           manifest so `java -jar target/my-zenoh-subscriber-0.1.0.jar`
+           will find MySubscriber without any extra classpath fuss.
+           No shade plugin is needed here, because everything that
+           ends up in target/classes is already ours: the pure-Java
+           sources are copied in during Step 2 and there is nothing
+           external to bundle. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
@@ -198,29 +96,60 @@ cd -   # back to my-zenoh-subscriber
 </project>
 ```
 
-Then **copy the pure-java sources into your project**:
+---
+
+## Step 2. Copy the pure-Java client sources into your project
+
+Clone the `java-zenoh-publisher` repository somewhere convenient
+(a scratch directory like `/tmp` is fine, it doesn't need to live
+next to your project on disk), then copy the entire
+`io/mdudel/zenoh/purejava/...` source tree straight into your own
+project's `src/main/java`:
 
 ```bash
-# From your my-zenoh-subscriber directory:
+# From inside your my-zenoh-subscriber directory:
 git clone https://github.com/mdudel/java-zenoh-publisher.git /tmp/jzp
 cp -r /tmp/jzp/pure-java/src/main/java/io src/main/java/
-# Optional: preserve licence + attribution
-cp /tmp/jzp/pure-java/LICENSE LICENSE
 ```
 
 You should now have `src/main/java/io/mdudel/zenoh/purejava/...`
-sitting next to `src/main/java/com/example/` in your project.
+sitting alongside `src/main/java/com/example/` in your project.
+The pure-Java module is written to only depend on the JDK
+standard library, so nothing else needs to come with it — no
+transitive jars, no vendored binaries, no Kotlin stdlib, nothing.
 
-> The pure-java module has zero third-party runtime dependencies, so
-> the copy-in path is genuinely as simple as this. Nothing else
-> needs to come along.
+Because the sources now live under your own `src/main/java`, they
+compile as part of your normal Maven build, which means anything
+your accreditation or code-review process applies to your own
+code (static analysis, licence scanning, SBOM generation, etc.)
+will apply to the Zenoh client sources at the same time. That is
+usually the whole point of taking the sources-in approach rather
+than pulling a jar off a repository.
+
+While you're there, it's polite to preserve the Apache 2.0
+licence header on the pure-Java sources by dropping a copy of the
+upstream `LICENSE` file at your project root:
+
+```bash
+cp /tmp/jzp/pure-java/LICENSE LICENSE
+```
+
+If you later need to pick up upstream changes, the mechanical
+answer is to delete `src/main/java/io/mdudel/zenoh/purejava` and
+re-run the `cp -r` above from a freshly-pulled clone. There is no
+version negotiation, no dependency resolution and no `~/.m2`
+cache to keep in sync — it is a plain source copy, and if you
+modify the copy locally, those modifications stay yours.
 
 ---
 
-## Step 2. Write the subscriber main class
+## Step 3. Write the subscriber main class
 
-Create `src/main/java/com/example/MySubscriber.java`. Same file for
-both paths:
+Create `src/main/java/com/example/MySubscriber.java` with the
+following contents. The class opens a session, subscribes to a
+key expression, prints one line per received message, and closes
+cleanly when either Ctrl-C is pressed or an optional timeout
+elapses.
 
 ```java
 package com.example;
@@ -238,7 +167,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Positional args (all optional):
  * <pre>
- *   java -jar target/my-zenoh-subscriber-0.1.0-fat.jar
+ *   java -jar target/my-zenoh-subscriber-0.1.0.jar
  *     [endpoint]         default: tcp/localhost:7447
  *     [keyExpr]          default: demo/**
  *     [timeoutSeconds]   default: 0 (run until Ctrl-C)
@@ -247,7 +176,6 @@ import java.util.concurrent.TimeUnit;
 public final class MySubscriber {
 
     public static void main(String[] args) throws Exception {
-        // 1. Parse args (all optional, defaults kick in from the left).
         String endpoint       = args.length > 0 ? args[0] : "tcp/localhost:7447";
         String keyExpr        = args.length > 1 ? args[1] : "demo/**";
         long   timeoutSeconds = args.length > 2 ? Long.parseLong(args[2]) : 0L;
@@ -257,36 +185,39 @@ public final class MySubscriber {
                 + (timeoutSeconds > 0 ? " for " + timeoutSeconds + "s"
                                       : " (Ctrl-C to stop)"));
 
-        // 2. Latch so Ctrl-C (SIGINT) tears the session down cleanly
-        //    instead of leaving a half-open socket on the router.
+        // A latch that a shutdown hook flips on SIGINT, so that
+        // Ctrl-C tears the session down cleanly instead of leaving
+        // a half-open socket on the router side.
         CountDownLatch stop = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(stop::countDown));
 
-        // 3. try-with-resources guarantees close() runs even on exceptions,
-        //    which sends a proper Zenoh CLOSE frame to the router.
+        // try-with-resources guarantees close() runs even on
+        // exceptions, which sends a Zenoh CLOSE frame to the router
+        // and joins the internal reader thread before returning.
         try (PureJavaZenohSubscriber sub = PureJavaZenohSubscriber.builder()
                 .connectEndpoint(endpoint)
                 .build()) {
 
-            // 4. start() opens the TCP/TLS/WS transport and completes
-            //    the 4-message Zenoh handshake (INIT -> INIT_ACK ->
-            //    OPEN_SYN -> OPEN_ACK). Throws IOException on failure.
+            // start() opens the TCP/TLS/WS transport and completes
+            // the Zenoh 4-message handshake. It blocks until the
+            // session is OPEN, or throws IOException on failure.
             sub.start();
             System.out.println("[my-subscriber] session OPEN");
 
-            // 5. Push-style subscribe: your lambda runs on a fresh
-            //    daemon thread inside the subscriber every time a
-            //    matching sample arrives.
-            //
-            //    For pull-style, use sub.subscribe(keyExpr) and call
-            //    subscription.take() / .poll(timeout) from a thread
-            //    you control.
+            // Push-style subscribe: the lambda runs on a fresh
+            // daemon thread inside the subscriber every time a
+            // sample matching the key expression arrives. If you'd
+            // prefer to control the receiving thread yourself,
+            // call sub.subscribe(keyExpr) instead and pull samples
+            // via subscription.take() or .poll(timeout, unit) from
+            // a thread you own.
             sub.subscribeAndConsume(keyExpr, sample -> {
                 System.out.println("[my-subscriber] "
                         + sample.key() + " -> " + sample.payloadAsString());
             });
 
-            // 6. Block until either the timeout elapses or Ctrl-C fires.
+            // Block until either the caller-supplied timeout
+            // elapses or the shutdown hook fires.
             if (timeoutSeconds > 0) {
                 stop.await(timeoutSeconds, TimeUnit.SECONDS);
             } else {
@@ -296,48 +227,50 @@ public final class MySubscriber {
             System.out.println("[my-subscriber] shutting down"
                     + " (received=" + sub.getReceivedCount() + ")");
         }
-        // try-with-resources auto-invokes sub.close() here, which
-        // sends CLOSE to the router and joins the reader thread.
     }
 }
 ```
 
-### What each block does
+A few notes on the API this main class touches, in case you want
+to adapt it later:
 
-* `builder().connectEndpoint(...)` — supports `tcp/`, `tls/`, `ws/`,
-  `wss/`. For TLS/mTLS add `.rootCaCertPath(...)`, `.clientCertPath(...)`,
-  `.clientKeyPath(...)` on the builder. See [`pure-java-mtls-subscriber`](../samples/pure-java-mtls-subscriber/)
-  for the full mTLS example.
-* `start()` — opens the transport and runs the Zenoh handshake.
-  Blocks until the session is OPEN or throws `IOException`. Call
-  once.
-* `subscribeAndConsume(keyExpr, onSample)` — push-style. Your lambda
-  runs on the subscriber's internal daemon thread; keep it fast or
-  hand samples off to your own executor.
-* `subscribe(keyExpr)` — pull-style. Returns a `Subscription` with
-  `take()` (blocks) and `poll(timeout, unit)` (returns `null` on
-  timeout).
-* `Sample.key()` — the concrete key the sample was published under
-  (never the wildcard).
-* `Sample.payloadAsString()` — UTF-8 decoded convenience. For bytes,
-  use `sample.payload()` which returns a defensive copy.
-* `close()` (or the end of the try-with-resources block) — sends a
-  Zenoh CLOSE frame, joins the reader thread, releases the socket.
-  Idempotent.
+* `builder().connectEndpoint(...)` accepts any of `tcp/host:port`,
+  `tls/host:port`, `ws/host:port` or `wss/host:port`. For TLS or
+  mTLS you'd also chain `.rootCaCertPath(...)`,
+  `.clientCertPath(...)` and `.clientKeyPath(...)` on the builder;
+  the pure-Java module accepts both PEM and PKCS12 material and
+  picks the right loader based on the file extension. The
+  [`pure-java-mtls-subscriber` sample](../samples/pure-java-mtls-subscriber/)
+  in the upstream repo shows the mTLS builder in full.
+* `sample.key()` returns the concrete key the sample was
+  published under, not the wildcard subscription pattern. So a
+  subscription on `demo/**` receiving a sample published under
+  `demo/room1/temp` will see `sample.key() == "demo/room1/temp"`.
+* `sample.payloadAsString()` is a UTF-8 convenience accessor; use
+  `sample.payload()` if you want the raw bytes (it returns a
+  defensive copy, so you're free to mutate the array without
+  disturbing anything).
+* `close()` (either called explicitly or triggered by the
+  try-with-resources block) is idempotent and safe to call from
+  any thread.
 
-### Key-expression syntax cheat-sheet
-
-| Pattern | Matches |
-|---|---|
-| `sensors/room1/temp` | Exactly that one key. |
-| `sensors/*/temp` | One-chunk wildcard: `sensors/room1/temp`, `sensors/kitchen/temp`, but not `sensors/x/y/temp`. |
-| `sensors/**` | Zero-or-more-chunks wildcard: `sensors`, `sensors/room1`, `sensors/room1/temp`, etc. |
-| `**` | Everything flowing through the router. |
-| `log/$*Error` | Sub-chunk wildcard: `log/Error`, `log/FatalError`, `log/SoftError`. |
+If you want to subscribe to something other than the default
+`demo/**` wildcard, the key-expression syntax the subscriber
+understands matches Zenoh's standard grammar. `sensors/room1/temp`
+matches exactly that one key. `sensors/*/temp` uses the
+single-chunk wildcard: it will match `sensors/room1/temp` and
+`sensors/kitchen/temp` but not `sensors/room1/upstairs/temp`.
+`sensors/**` uses the double-star wildcard and matches
+`sensors`, `sensors/room1`, `sensors/room1/temp` and any deeper
+nesting. A bare `**` on its own catches everything flowing
+through the router, which is useful when you're trying to work
+out what your publishers are actually emitting. There is also a
+sub-chunk wildcard: `log/$*Error` matches `log/Error`,
+`log/FatalError` and `log/SoftError`.
 
 ---
 
-## Step 3. Build the project
+## Step 4. Build the project
 
 From the `my-zenoh-subscriber` directory:
 
@@ -345,44 +278,34 @@ From the `my-zenoh-subscriber` directory:
 mvn -q clean package
 ```
 
-Look in `target/`:
+Look inside `target/` and you should find
+`my-zenoh-subscriber-0.1.0.jar`, weighing in at around 60 KB.
+That includes both your `MySubscriber` class and the entire
+pure-Java Zenoh client, because both compiled from the same
+`src/main/java` tree. There is no separate library jar to
+distribute alongside it, and no fat / thin distinction to worry
+about — this is the artifact.
 
-* **Path A** produces `target/my-zenoh-subscriber-0.1.0-fat.jar`
-  (~60 KB — includes the shaded pure-java module).
-* **Path B** produces `target/my-zenoh-subscriber-0.1.0.jar`
-  (~60 KB — pure-java classes are already yours, so nothing gets
-  shaded, but the manifest still has `Main-Class`).
-
-If the build fails with `cannot find symbol: class PureJavaZenohSubscriber`
-on Path A, you skipped `mvn -f pure-java/pom.xml install` or the
-local Maven cache went stale after a `git pull` — go back to Step 1
-Path A and rerun it.
+If the compile fails with `cannot find symbol: class
+PureJavaZenohSubscriber` (or any of its supporting classes), it
+almost always means the `cp -r` from Step 2 didn't land the
+sources where the compiler expects them. Double-check that
+`src/main/java/io/mdudel/zenoh/purejava/PureJavaZenohSubscriber.java`
+really exists at that exact path, and rerun `mvn -q clean
+package`.
 
 ---
 
-## Step 4. Run it
+## Step 5. Run it
 
-### Start a Zenoh router (if you don't already have one)
-
-Fastest option, no install:
+Start a Zenoh router if you haven't already. The simplest option
+is Docker:
 
 ```bash
 docker run --rm -it -p 7447:7447 eclipse/zenoh
 ```
 
-Or download a native `zenohd` from
-[the Zenoh releases page](https://github.com/eclipse-zenoh/zenoh/releases)
-and run `./zenohd`.
-
-### Run the subscriber
-
-**Path A:**
-
-```bash
-java -jar target/my-zenoh-subscriber-0.1.0-fat.jar
-```
-
-**Path B:**
+Then, in a fresh terminal:
 
 ```bash
 java -jar target/my-zenoh-subscriber-0.1.0.jar
@@ -395,83 +318,92 @@ You should see:
 [my-subscriber] session OPEN
 ```
 
-...and then it sits there waiting for matching messages.
-
-### Publish something to prove it works
-
-In another terminal, use any Zenoh publisher. Rust CLI:
-
-```bash
-z_put -k demo/hello -v 'hello from another terminal'
-```
-
-Python:
+At which point the subscriber is idling, waiting for anything
+matching `demo/**` to be published. To prove the subscriber
+actually receives data, you need to publish something to a
+matching key. From another terminal any Zenoh publisher will do
+— the Rust CLI's `z_put -k demo/hello -v 'hello from another
+terminal'`, or a one-line Python `python -c "import zenoh;
+s=zenoh.open(); s.put('demo/hello','hi'); s.close()"`, or the
+pure-Java publisher sample bundled with the upstream repo:
 
 ```bash
-python -c "import zenoh; s=zenoh.open(); s.put('demo/hello','hi'); s.close()"
-```
-
-Or the pure-java sibling sample (from the `java-zenoh-publisher`
-clone you already have):
-
-```bash
-cd /path/to/java-zenoh-publisher
+cd /tmp/jzp
+mvn -q -f pure-java/pom.xml install
 mvn -q -f samples/pure-java-simple-publisher/pom.xml package
 java -jar samples/pure-java-simple-publisher/target/pure-java-simple-publisher-0.1.0.jar
 ```
 
-Back in the subscriber terminal you should see:
+Back in the subscriber terminal you should see one line per
+message, of the form:
 
 ```
 [my-subscriber] demo/hello -> hello from another terminal
 ```
 
-Ctrl-C stops the subscriber cleanly.
+Ctrl-C stops the subscriber cleanly, and you should see the
+`shutting down (received=N)` line print on the way out with the
+count of samples the session actually processed.
 
-### Override the defaults
-
-All three positional args at once:
+The two extra positional arguments let you point the subscriber
+at a remote router and narrow the subscription in one go, e.g.
 
 ```bash
-# Path A
-java -jar target/my-zenoh-subscriber-0.1.0-fat.jar tcp/router.local:7447 sensors/** 30
+java -jar target/my-zenoh-subscriber-0.1.0.jar tcp/router.local:7447 sensors/** 30
 ```
 
-That connects to a router on `router.local`, subscribes to every
-key under `sensors/`, and exits after 30 seconds.
-
-On **Windows / PowerShell**, use forward-slash paths for the jar or
-escape the backslashes, and forget about bash `\` line
-continuations — put the whole command on one line:
+which connects to `router.local:7447`, subscribes to everything
+under `sensors/`, and exits after 30 seconds. On Windows /
+PowerShell put the whole command on one line and use either
+forward-slash or escaped-backslash paths for the jar; the bash
+`\` line-continuation trick does not work in PowerShell and will
+just get eaten as a literal path separator:
 
 ```powershell
-java -jar target\my-zenoh-subscriber-0.1.0-fat.jar tcp/router.local:7447 sensors/** 30
+java -jar target\my-zenoh-subscriber-0.1.0.jar tcp/router.local:7447 sensors/** 30
 ```
 
 ---
 
-## Step 5. Where to go next
+## Where to go from here
 
-* **TLS / mTLS** — flip your endpoint to `tls/...` or `wss/...` and
-  add `.rootCaCertPath(...)`, `.clientCertPath(...)`,
-  `.clientKeyPath(...)` on the builder. PEM and PKCS12 are both
-  accepted; the file extension picks the loader. Full worked
-  example: [`../samples/pure-java-mtls-subscriber/`](../samples/pure-java-mtls-subscriber/).
-* **Publisher** — the API mirrors this exactly. Swap
+Once the subscriber is running, the most likely next things
+you'll want to do are all straightforward extensions of the same
+shape:
+
+* **Add TLS or mTLS.** Change your endpoint to `tls/host:port` or
+  `wss/host:port` and chain the relevant cert / key /
+  trust-anchor paths on the builder. Both PEM and PKCS12 are
+  accepted. The [`pure-java-mtls-subscriber` sample](../samples/pure-java-mtls-subscriber/)
+  works end-to-end against production `zenohd` under mTLS and is
+  the shortest reference for the builder shape.
+* **Publish as well as subscribe.** The API is deliberately
+  mirrored between the two facades, so swap
   `PureJavaZenohSubscriber` for
   [`PureJavaZenohPublisher`](src/main/java/io/mdudel/zenoh/purejava/PureJavaZenohPublisher.java)
-  and call `.publish(bytes)` instead of `.subscribeAndConsume(...)`.
-  Worked example: [`../samples/pure-java-simple-publisher/`](../samples/pure-java-simple-publisher/).
-* **Scouting** — discover routers/peers on the local segment
-  without ever opening a session:
+  and call `.publish(byte[])` instead of `.subscribeAndConsume(...)`.
+  The [`pure-java-simple-publisher` sample](../samples/pure-java-simple-publisher/)
+  is essentially the publisher-side twin of the class you just
+  wrote.
+* **Discover routers on the local segment.** If you want to find
+  routers or peers without ever opening a session,
   [`PureJavaZenohScout`](src/main/java/io/mdudel/zenoh/purejava/scouting/PureJavaZenohScout.java)
-  + sample [`../samples/pure-java-scout/`](../samples/pure-java-scout/).
-* **Pull-style consumption** — call `sub.subscribe(keyExpr)` and
-  `subscription.take()` / `.poll(timeout, unit)` on the returned
-  handle instead of using `subscribeAndConsume`. Gives you full
-  control over which thread processes samples.
-* **Bridging logs to SLF4J / Log4j / Logback** — see
-  [pure-java README "Bridging logs"](README.md#bridging-logs).
+  is a passive/active UDP-multicast listener with both a
+  callback and a snapshot API. The
+  [`pure-java-scout` sample](../samples/pure-java-scout/) wraps
+  it into a live table.
+* **Pull-style consumption instead of push.** Call
+  `sub.subscribe(keyExpr)` and then `subscription.take()` (blocks)
+  or `subscription.poll(timeout, unit)` (returns `null` on
+  timeout). Useful when you want the receiving thread under
+  your own control.
+* **Route the client's logs into your existing logging stack.**
+  The pure-Java module writes to `java.lang.System.Logger`, so
+  adding SLF4J's `slf4j-jdk-platform-logging` bridge (plus
+  whichever SLF4J backend you already use) is enough to have
+  Zenoh log lines flow into your normal Logback / Log4j / etc.
+  configuration. The full recipe is in the ["Bridging logs"
+  section of the pure-java README](README.md#bridging-logs).
 
 ---
 
@@ -479,9 +411,8 @@ java -jar target\my-zenoh-subscriber-0.1.0-fat.jar tcp/router.local:7447 sensors
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `no main manifest attribute, in target/my-zenoh-subscriber-0.1.0.jar` | On Path A you ran `java -jar` against the thin non-fat jar. | Use `target/my-zenoh-subscriber-0.1.0-fat.jar` (the shaded one with `-fat` in the filename). |
-| `cannot find symbol: class PureJavaZenohSubscriber` at compile time | Path A `~/.m2` doesn't have the pure-java jar, or it's stale after a `git pull` of the upstream repo. | `mvn -f pure-java/pom.xml install` from the upstream clone, then `mvn clean package` in your project. |
-| `java.net.ConnectException: Connection refused` at `start()` | Router isn't running, or endpoint host/port is wrong. | Start `zenohd` / the Docker container, or fix the endpoint. |
-| Subscriber sits at `session OPEN` and nothing arrives | The publisher's key doesn't match your subscription's key expression. | Widen the subscription (e.g. `**` to catch everything), or check the publisher's key with `z_sub -k '**'` alongside. |
-| `IOException` with `TLS handshake failed` | Router requires mTLS and you didn't provide a client cert + key, or your cert isn't signed by a CA the router trusts. | Add `.clientCertPath(...)` + `.clientKeyPath(...)` + `.rootCaCertPath(...)`, or see the mTLS sample. |
-| `UnsupportedOperationException` about UDP or QUIC | UDP session transport and QUIC are out-of-scope in the pure-java module. | Use `tcp/`, `tls/`, `ws/`, or `wss/`. QUIC would need a third-party dep like Kwik — see the [Non-goals](README.md#non-goals-permanent-not-yet) section. |
+| `cannot find symbol: class PureJavaZenohSubscriber` at compile time | The `cp -r` in Step 2 didn't land the sources under `src/main/java/io/mdudel/zenoh/purejava/...`. | Verify the path exists and re-run the copy from a fresh upstream clone. |
+| `java.net.ConnectException: Connection refused` at `start()` | The router isn't running, or the endpoint host / port doesn't match reality. | Start `zenohd` (or the Docker container), or fix the endpoint. |
+| Subscriber logs `session OPEN` and then nothing arrives | Your publisher's key doesn't match your subscription's key expression. | Widen the subscription temporarily (e.g. `**` to catch everything), or double-check the publisher's key. |
+| `IOException` with `TLS handshake failed` | The router expects mTLS and you haven't supplied a client cert + key, or the cert isn't signed by a CA the router trusts. | Chain `.rootCaCertPath(...)`, `.clientCertPath(...)` and `.clientKeyPath(...)` on the builder, or consult the mTLS sample. |
+| `UnsupportedOperationException` referencing UDP or QUIC | UDP session transport and QUIC are deliberately out of scope in the pure-Java module. | Use `tcp/`, `tls/`, `ws/` or `wss/`. QUIC would require a third-party dependency such as Kwik — see the [Non-goals](README.md#non-goals-permanent-not-yet) section of the pure-java README for the rationale. |
