@@ -49,17 +49,31 @@ The generator is [.github/workflows/javadoc.yml](.github/workflows/javadoc.yml).
 mvn -q clean package
 ```
 
-Produces `target/java-zenoh-publisher-0.1.0.jar` (~30 MB — includes
-the native Zenoh libraries).
+Produces two jars in `target/`:
+
+* `java-zenoh-publisher-0.1.0.jar` — the thin library jar (no
+  `Main-Class`, no bundled deps). This is what other Maven projects
+  consume when they depend on this artifact; **do not try to
+  `java -jar` this one**.
+* `java-zenoh-publisher-0.1.0-fat.jar` (~30 MB) — the runnable
+  shaded jar with `ZenohPublisherApp` as its main class and the
+  native Zenoh libraries + Kotlin stdlib bundled in. **Use this one
+  for the CLI.**
 
 ### 2. Publish something
 
 ```bash
-java -jar target/java-zenoh-publisher-0.1.0.jar \
+java -jar target/java-zenoh-publisher-0.1.0-fat.jar \
     --endpoint=tcp/localhost:7447 \
     --key=demo/example/zenoh-java \
     --rate=1 \
     --message="hello from the starter"
+```
+
+On Windows / PowerShell (single line, no backslash continuations):
+
+```powershell
+java -jar target\java-zenoh-publisher-0.1.0-fat.jar --endpoint=tcp/localhost:7447 --key=demo/example/zenoh-java --rate=1 --message="hello from the starter"
 ```
 
 ### 3. See it arrive
