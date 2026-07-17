@@ -27,6 +27,10 @@ Runnable minimal examples for each:
 [`pure-java-simple-publisher/`](../samples/pure-java-simple-publisher/),
 [`pure-java-simple-subscriber/`](../samples/pure-java-simple-subscriber/),
 [`pure-java-scout/`](../samples/pure-java-scout/).
+There's also a one-shot topic-lister sample —
+[`pure-java-list-topics/`](../samples/pure-java-list-topics/) — that
+snapshots the router's current subscriber declarations and prints
+them as a table or JSON.
 mTLS variants:
 [`pure-java-mtls-publisher/`](../samples/pure-java-mtls-publisher/),
 [`pure-java-mtls-subscriber/`](../samples/pure-java-mtls-subscriber/).
@@ -273,6 +277,68 @@ README for the full flag list and the environment gotchas (spoiler:
 End-to-end smoke test walkthrough:
 [`docs/scout-smoke-test.md`](../docs/scout-smoke-test.md).
 
+## Listing topics
+
+Besides scouting ("which routers / peers are reachable") the pure-Java
+module can also answer "what topics does this router currently know
+about?" — a one-shot synchronous snapshot rather than the streaming
+discovery callback that
+[`discoverTopics`](src/main/java/io/mdudel/zenoh/purejava/PureJavaZenohSubscriber.java)
+provides. Two methods on `PureJavaZenohSubscriber` cover it:
+
+```java
+try (PureJavaZenohSubscriber sub = PureJavaZenohSubscriber.builder()
+        .connectEndpoint("tcp/localhost:7447")
+        .build()) {
+    sub.start();
+
+    // Snapshot every subscriber declaration the router knows about.
+    List<PureJavaZenohSubscriber.Topic> all =
+            sub.listAllTopicsNow(3_000);        // 3s timeout
+
+    // Or restrict to a pattern:
+    List<PureJavaZenohSubscriber.Topic> sensors =
+            sub.listTopicsNow("sensors/**", 3_000);
+
+    for (var t : all) {
+        System.out.println(t.keyExpr() + " (id=" + t.declaredById() + ")");
+    }
+
+    // Serialise to compact JSON with a zero-deps helper.
+    String json = PureJavaZenohSubscriber.Topic.toJson(all);
+}
+```
+
+Both methods block the calling thread until the router replays its
+current subscriber state (a `FINAL` sentinel arrives) or the timeout
+elapses. On timeout you get back whatever was collected so far
+rather than an exception — a slow or half-broken router won't make
+your code throw, it'll just give you a smaller list.
+
+`Topic` is a tiny public record: `keyExpr` (the declared key
+expression) and `declaredById` (the id the declaring peer chose
+for its own subscription, useful only for correlating later
+undeclare events from `discoverTopics`). The static
+`Topic.toJson(List<Topic>)` helper emits a compact
+`[{"keyExpr":..., "declaredById":...}, ...]` array using nothing
+but JDK APIs, so the zero-runtime-dependency invariant survives
+into the JSON path.
+
+**What this shows you (and what it does not).** The listing
+reports subscriber declarations only. Zenoh 1.x has no matching
+`DeclarePublisher` wire message — publishers are pure client-side
+state, and the router only routes to matching subscribers — so a
+key expression that has publishers but no subscribers will not
+appear here. When you actually need to catch traffic from live
+publishers, the right tool is to subscribe to `**` with
+`subscribeAndConsume` and read `Sample.key()` on incoming
+samples.
+
+Runnable CLI wrapper:
+[`samples/pure-java-list-topics/`](../samples/pure-java-list-topics/) —
+table output by default, `--json` for machine-readable output that
+pipes cleanly into `jq`.
+
 ## Building
 
 ```bash
@@ -434,6 +500,13 @@ Subscriber path:
   inbound dispatcher fans DECLARE messages out to the right interest
   id — pinned by a test that would fail with the pre-fix
   `subscriptions.isEmpty()` short-circuit still in place.
+- **`ListTopicsNowTest`** covers the synchronous one-shot
+  `listTopicsNow(pattern, timeoutMs)` / `listAllTopicsNow(timeoutMs)`
+  facade: CURRENT-mode interest selection, blocking until the FINAL
+  sentinel arrives, graceful partial-list return on timeout,
+  immutability of the returned snapshot, forwarding of the pattern
+  to the router, start / argument validation, and JSON serialisation
+  including proper escaping of quotes and control characters.
 
 Scouting path:
 
