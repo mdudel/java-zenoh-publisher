@@ -1,0 +1,22 @@
+-encoding
+'UTF-8'
+-protected
+-source
+'17'
+-sourcepath
+'/home/runner/work/java-zenoh-publisher/java-zenoh-publisher/pure-java/src/main/java'
+-author
+-bottom
+'Copyright &#169; 2026. All rights reserved.'
+-charset
+'UTF-8'
+-d
+'/home/runner/work/java-zenoh-publisher/java-zenoh-publisher/pure-java/target/reports/apidocs'
+-docencoding
+'UTF-8'
+-doctitle
+'java-zenoh-publisher-pure 0.0.1-SNAPSHOT API'
+-use
+-version
+-windowtitle
+'java-zenoh-publisher-pure 0.0.1-SNAPSHOT API'
