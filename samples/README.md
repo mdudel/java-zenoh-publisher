@@ -140,6 +140,63 @@ end-to-end demo. The class-level Javadoc at the top of every
   Or grab a native binary from
   https://github.com/eclipse-zenoh/zenoh/releases.
 
+### Running `zenohd` locally? Start it with `--listen tcp/0.0.0.0:7447`
+
+Every sample in this folder defaults to `tcp/localhost:7447`, but a
+vanilla `zenohd` / `zenohd.exe` invocation does **not** bind
+loopback by default. On startup it enumerates every network
+interface with a routable address and binds those instead — you'll
+see a log block like this:
+
+```
+Zenoh can be reached at: tcp/[fe80::...]:7447   (link-local IPv6)
+Zenoh can be reached at: tcp/10.10.20.3:7447    (private IPv4)
+Zenoh can be reached at: tcp/192.168.1.85:7447  (your LAN IP)
+...
+```
+
+Notice what's missing: `127.0.0.1` and `[::1]`. If you try to run
+one of the samples against this router with its default endpoint,
+the socket connect to `localhost:7447` will fail with
+`Connection refused` even though `zenohd` is very much alive on
+the listed addresses.
+
+Easiest fix, works on Windows / Linux / macOS:
+
+```bash
+zenohd --listen tcp/0.0.0.0:7447
+# or on Windows:
+zenohd.exe --listen tcp/0.0.0.0:7447
+```
+
+`0.0.0.0` binds every IPv4 interface **including** loopback, so
+`tcp/localhost:7447` starts working immediately and the samples
+can run with all their default arguments. If you also want IPv6
+reachability, add a second listener: `--listen tcp/[::]:7447`.
+
+If you'd rather not remember the flag every time, drop a small
+JSON5 config next to the binary and pass it with `-c`:
+
+```json5
+// zenohd.json5
+{
+  listen: {
+    endpoints: [ "tcp/0.0.0.0:7447" ]
+  }
+}
+```
+
+Then `zenohd -c zenohd.json5`. The Docker image above already
+binds `0.0.0.0` via the `-p` port publish, so this only bites the
+bare-metal `zenohd` case.
+
+Second option, no router-config change: pass one of the addresses
+from the log to the sample as its first positional argument, e.g.
+
+```bash
+java -jar target/pure-java-simple-publisher-0.1.0.jar tcp/192.168.1.85:7447
+```
+
 ## End-to-end demo
 
 Three shells, one of each pair of samples:
