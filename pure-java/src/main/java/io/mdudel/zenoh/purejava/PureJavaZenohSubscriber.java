@@ -355,11 +355,11 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
      * router returns matching an INTEREST.
      *
      * <ul>
-     * <li>{@link #onTopicDeclared(String, long)} — a new subscription exists in
+     * <li>{@link #onTopicDeclared(String, long)} - a new subscription exists in
      * the network for the given key expression.</li>
-     * <li>{@link #onTopicUndeclared(long)} — a previously-seen subscription is
+     * <li>{@link #onTopicUndeclared(long)} - a previously-seen subscription is
      * gone.</li>
-     * <li>{@link #onDiscoveryComplete()} — the router finished replaying
+     * <li>{@link #onDiscoveryComplete()} - the router finished replaying
      * current state; further callbacks (if any) are live updates. Only fires
      * for CURRENT / CURRENT_FUTURE modes.</li>
      * </ul>
@@ -425,6 +425,10 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
                             // rather than reporting a truncated key.
                             String k = s.resolveRemoteKey(ds.keyScope(), ds.keySuffix());
                             if (k == null) {
+                                // Alias we have no mapping for. Reporting the
+                                // bare suffix here would be worse than
+                                // reporting nothing, because the caller
+                                // cannot tell a fragment from a real key.
                                 LOG.log(Level.WARNING,
                                         "discoverTopics: unresolved keyexpr alias scope={0}"
                                         + " for subscriber id={1}; topic omitted",
@@ -587,6 +591,28 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
      * Open a live {@link TopicRegistry} over every discovery channel this
      * client can reach.
      *
+     * <p>Where {@link #discoverTopics(String, TopicListener)} is a raw
+     * callback over subscriber declarations alone, this merges four sources
+     * into one queryable set: declared subscribers, declared queryables,
+     * liveliness tokens, and optionally the keys of messages that actually
+     * arrive. Each entry records which sources saw it, so the caller can
+     * tell "someone is listening here" from "data is flowing here". See
+     * {@link TopicSource} for what each one proves.</p>
+     *
+     * <p>If {@code org} is set on the builder it is prepended to the
+     * pattern, matching {@link #subscribe(String)}. Both channels use the
+     * same resulting pattern.</p>
+     *
+     * <p>Setting {@code observeTraffic} declares a real subscription on the
+     * pattern. On a busy network with a broad pattern that can mean a great
+     * deal of inbound data, all of which is discarded after its key is
+     * noted. It may also be refused by an ACL that allows discovery but not
+     * subscription. Pass {@code false} to stay purely passive.</p>
+     *
+     * <p>The caller owns the returned registry and must {@link
+     * TopicRegistry#close()} it. Closing this subscriber also closes any
+     * traffic subscription the registry opened.</p>
+     *
      * @param keyExprPattern key expression pattern to watch; {@code "**"}
      *                       for everything
      * @param observeTraffic true to also subscribe and record observed keys
@@ -598,6 +624,17 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
     /**
      * As {@link #topics(String, boolean)}, but with a choice of live or
      * cumulative bookkeeping.
+     *
+     * <p>A live registry answers "what is out there now" and drops a topic
+     * once its last declaration is withdrawn. A cumulative one answers
+     * "what has been out there since I started" and never drops anything;
+     * departed topics stay in the snapshot with {@link TopicInfo#active()}
+     * false. Observed traffic is sticky either way.</p>
+     *
+     * <p>For a cumulative registry that lives as long as the subscriber
+     * does, prefer {@link #startRecordingTopics()} or the
+     * {@code recordTopics} builder flag, which own the lifecycle for
+     * you.</p>
      *
      * @param cumulative true to accumulate, false to track live state
      */
@@ -648,6 +685,10 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
                                 reg.recordUndeclaration(TopicSource.LIVENESS_TOKEN,
                                         body.asUndeclareToken().id());
                             default -> {
+                                // DeclareKeyExpr and the RAW fallback (which
+                                // still carries DeclareFinal, id 0x1A) say
+                                // nothing about topics. The session applies
+                                // keyexpr mappings itself before we see this.
                             }
                         }
                     });
@@ -665,11 +706,15 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
 
         if (observeTraffic) {
             try {
+                // Deliberately not subscribe(): org is already folded into
+                // 'effective', and resolveKey is not idempotent for a
+                // non-empty org.
                 Subscription sub = s.declareSubscriber(KeyExpr.of(effective));
                 subscriptions.add(sub);
                 sub.forEach(sample -> reg.recordSample(sample.key()));
                 reg.attachTrafficSubscription(sub);
             } catch (SessionException e) {
+                // Do not leak the interest we just declared.
                 reg.close();
                 lastError = "topics() traffic subscription failed: " + e.getMessage();
                 throw new IOException(lastError, e);
@@ -678,6 +723,14 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
         return reg;
     }
 
+    /**
+     * Resolve a wire key and hand it to the registry, or log and drop it.
+     *
+     * <p>A nonzero scope names a keyexpr alias the router interned earlier.
+     * If this session never saw the mapping, the suffix on its own is a
+     * fragment, and reporting a fragment is worse than reporting nothing
+     * because the caller cannot tell the two apart.</p>
+     */
     private static void record(TopicRegistry reg, ZenohSession s, TopicSource source,
             long declId, int keyScope, String keySuffix) {
         String k = s.resolveRemoteKey(keyScope, keySuffix);
@@ -693,6 +746,25 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
     /**
      * Blocking convenience over {@link #topics(String, boolean)}: collect
      * topics for up to {@code timeout}, then return the merged, sorted list.
+     *
+     * <p>Waits for the router to finish replaying current declarations, then
+     * spends whatever remains of the budget observing live traffic, then
+     * closes everything. Traffic observation is always on here, since a
+     * caller wanting declarations only has no reason to block.</p>
+     *
+     * <p>The timeout is mandatory and there is no "complete" state to wait
+     * for instead. The declaration replay does finish, but traffic
+     * observation cannot: a topic that stays silent is indistinguishable
+     * from one that does not exist. Longer timeouts therefore find strictly
+     * more, and the result is always a lower bound.</p>
+     *
+     * <p>If the calling thread is interrupted the wait ends early, the
+     * interrupt flag is restored, and whatever was gathered so far is
+     * returned rather than discarded.</p>
+     *
+     * @param keyExprPattern key expression pattern; {@code "**"} for everything
+     * @param timeout        how long to gather; must be positive
+     * @return topics sorted by key expression, never null, possibly empty
      */
     public List<TopicInfo> listTopics(String keyExprPattern, Duration timeout) throws IOException {
         Objects.requireNonNull(timeout, "timeout");
@@ -727,6 +799,21 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
      * Start accumulating topics for the life of this subscriber, so a later
      * {@link #recordedTopics()} reports everything seen since recording
      * began rather than only what happens to be there at that instant.
+     *
+     * <p>Uses the pattern and traffic setting from the builder
+     * ({@code recordTopicsPattern}, default {@code "**"}, and
+     * {@code recordTopicTraffic}, default true). Setting the
+     * {@code recordTopics} builder flag calls this automatically from
+     * {@link #start()}, which is the usual way in.</p>
+     *
+     * <p>Idempotent: calling it again while recording returns the running
+     * registry rather than opening a second one. The subscriber owns the
+     * registry and closes it in {@link #stop()}, so callers should not
+     * close it themselves.</p>
+     *
+     * @return the running cumulative registry
+     * @throws IOException if the subscriber is not started, or the router
+     *                     refuses the interest or the traffic subscription
      */
     public TopicRegistry startRecordingTopics() throws IOException {
         return startRecordingTopics(recordTopicsPattern, recordTopicTraffic);
@@ -735,6 +822,10 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
     /**
      * As {@link #startRecordingTopics()} but with an explicit pattern and
      * traffic setting, overriding the builder values.
+     *
+     * <p>If a recorder is already running, the existing one is returned
+     * unchanged and these arguments are ignored. Stop and restart the
+     * subscriber to record a different pattern.</p>
      */
     public synchronized TopicRegistry startRecordingTopics(String keyExprPattern,
             boolean observeTraffic) throws IOException {
@@ -768,6 +859,10 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
 
     /**
      * The always-on recorder, or null if recording was never started.
+     *
+     * <p>Exposed for callers wanting {@link TopicRegistry#awaitCurrent} or
+     * {@link TopicRegistry#activeOnly()}. Do not close it; use
+     * {@link #stopRecordingTopics()}.</p>
      */
     public TopicRegistry topicRegistry() {
         return recorder;
@@ -775,6 +870,20 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
 
     /**
      * Every topic seen since recording started, sorted by key expression.
+     *
+     * <p>Unlike {@link #listTopics(String, Duration)} this does not block
+     * and does not open anything: the recorder has been listening all
+     * along, so the answer is already there. Topics that have since gone
+     * away are included with {@link TopicInfo#active()} false. Use
+     * {@link TopicRegistry#activeOnly()} on {@link #topicRegistry()} for
+     * only what is still there.</p>
+     *
+     * <p>The longer the subscriber has been running, the more complete
+     * this is, which is the point: a topic that was busy an hour ago and
+     * silent now still shows up.</p>
+     *
+     * @throws IllegalStateException if recording was never started, since
+     *         an empty list would be indistinguishable from "found nothing"
      */
     public List<TopicInfo> recordedTopics() {
         TopicRegistry reg = recorder;
@@ -787,6 +896,8 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
     }
 
     // ----- endpoint parsing + transport factory --------------------------
+    // (Same logic as PureJavaZenohPublisher; kept in sync deliberately.
+    //  A shared TransportFactory helper would be nicer -- see followup below.)
     Transport buildTransport() throws IOException {
         if (connectEndpoint.isEmpty()) {
             throw new IOException("connectEndpoint is required");
@@ -1012,16 +1123,43 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
             return this;
         }
 
+        /**
+         * Record every topic seen, for as long as this subscriber runs.
+         *
+         * <p>{@link #start()} opens a cumulative {@link TopicRegistry} and
+         * leaves it running, so {@link #recordedTopics()} can answer at any
+         * time with everything seen since start, including topics that
+         * have since gone away. Default false.</p>
+         *
+         * <p>If the registry cannot be opened, start() logs a WARNING and
+         * carries on rather than failing, since ordinary subscribing
+         * should not depend on discovery being permitted.</p>
+         */
         public Builder recordTopics(boolean v) {
             this.recordTopics = v;
             return this;
         }
 
+        /**
+         * Key expression pattern the recorder watches. Default {@code "**"}
+         * (everything). Narrow it to cut the traffic volume on a busy
+         * network. Ignored unless {@link #recordTopics(boolean)} is set.
+         */
         public Builder recordTopicsPattern(String v) {
             this.recordTopicsPattern = v;
             return this;
         }
 
+        /**
+         * Whether the recorder also subscribes to its pattern to catch keys
+         * that carry data but that nobody declared. Default true.
+         *
+         * <p>Set false to stay passive, which avoids pulling in every
+         * matching message and works where an ACL permits discovery but
+         * not subscription. The cost is losing the one source that proves
+         * data is actually flowing. Ignored unless
+         * {@link #recordTopics(boolean)} is set.</p>
+         */
         public Builder recordTopicTraffic(boolean v) {
             this.recordTopicTraffic = v;
             return this;
@@ -1033,6 +1171,19 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
     }
 
     // ----- CLI ----------------------------------------------------------
+    /**
+     * CLI: subscribe to a key expression and print each received message as a
+     * line on stdout. Runs until interrupted (Ctrl-C) or until an optional
+     * {@code timeoutSeconds} elapses.
+     *
+     * <p>
+     * Usage:</p>
+     * <pre>
+     * java -jar pure-java-simple-subscriber.jar
+     * java -jar pure-java-simple-subscriber.jar tcp/router:7447 demo/**
+     * java -jar pure-java-simple-subscriber.jar tcp/router:7447 demo/** 30
+     * </pre>
+     */
     public static void main(String[] args) throws Exception {
         String endpoint = args.length > 0 ? args[0] : "tcp/localhost:7447";
         String keyExpr = args.length > 1 ? args[1] : "demo/**";
@@ -1061,4 +1212,5 @@ public final class PureJavaZenohSubscriber implements AutoCloseable {
                     + " (received=" + sub.getReceivedCount() + ")");
         }
     }
+
 }
