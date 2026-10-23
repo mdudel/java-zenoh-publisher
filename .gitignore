@@ -14,5 +14,7 @@ target/
 .DS_Store
 Thumbs.db
 
+agy-yolo.bat
+
 # Shade plugin artefact - regenerated on each `mvn package`
 dependency-reduced-pom.xml

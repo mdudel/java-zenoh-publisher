@@ -6,7 +6,10 @@
 package io.mdudel.zenoh.purejava.wire.messages;
 
 import io.mdudel.zenoh.purejava.wire.Extension;
+import io.mdudel.zenoh.purejava.wire.PushExts;
+import io.mdudel.zenoh.purejava.wire.Qos;
 import io.mdudel.zenoh.purejava.wire.RBuf;
+import io.mdudel.zenoh.purejava.wire.Timestamp;
 import io.mdudel.zenoh.purejava.wire.WBuf;
 
 import java.nio.charset.StandardCharsets;
@@ -90,6 +93,32 @@ public record Push(
         return new Push(0, keyExpr, false, List.of(), put.encode());
     }
 
+    /**
+     * Overload of {@link #ofPut(String, Put)} that carries optional
+     * QoS / Timestamp / NodeId network extensions.
+     *
+     * <p>Each argument is opt-in and follows the Rust codec's skip rules,
+     * so the wire output is byte-identical to {@link #ofPut(String, Put)}
+     * when the caller passes the default value for every knob:</p>
+     * <ul>
+     *   <li>{@code qos == null} or {@link Qos#DEFAULT} -&gt; QoS extension omitted.</li>
+     *   <li>{@code ts == null} -&gt; Timestamp extension omitted.</li>
+     *   <li>{@code nodeId == 0} -&gt; NodeId extension omitted.</li>
+     * </ul>
+     *
+     * <p>Extensions are appended in ascending id order (0x01 QoS,
+     * 0x02 Timestamp, 0x03 NodeId) per Zenoh convention. See
+     * {@link PushExts} for the individual extension encoders.</p>
+     */
+    public static Push ofPut(String keyExpr, Put put, Qos qos, Timestamp ts, long nodeId) {
+        if (keyExpr == null || keyExpr.isEmpty()) {
+            throw new IllegalArgumentException("keyExpr must be non-empty");
+        }
+        return new Push(0, keyExpr, false,
+                PushExts.buildPushExtensions(qos, ts, nodeId),
+                put.encode());
+    }
+
     /** Encode this Push to bytes. */
     public byte[] encode() {
         WBuf w = new WBuf(body.length + 16);
@@ -113,7 +142,11 @@ public record Push(
 
     /** Parse a Push from bytes; the tail is treated as opaque body. */
     public static Push decode(byte[] data) {
-        RBuf r = new RBuf(data);
+        return decode(new RBuf(data));
+    }
+
+    /** Decode one PUSH from a shared frame cursor, leaving following messages unread. */
+    public static Push decode(RBuf r) {
         int header = r.u8();
         int id = header & 0x1F;
         if (id != ID) {
@@ -134,7 +167,13 @@ public record Push(
             suffix = new String(r.lenBytes(), StandardCharsets.UTF_8);
         }
         List<Extension> exts = hasZ ? Extension.readAll(r) : List.of();
-        byte[] body = r.bytes(r.remaining());
+        if (!r.hasMore()) throw new IllegalArgumentException("Push.decode: missing PushBody");
+        int bodyId = r.peekU8() & 0x1F;
+        if (bodyId != Put.ID) {
+            throw new IllegalArgumentException("Push.decode: unsupported PushBody id 0x" + Integer.toHexString(bodyId));
+        }
+        // PUT is self-delimiting because its payload is length-prefixed.
+        byte[] body = Put.decode(r).encode();
         return new Push((int) scope, suffix, hasM, exts, body);
     }
 
