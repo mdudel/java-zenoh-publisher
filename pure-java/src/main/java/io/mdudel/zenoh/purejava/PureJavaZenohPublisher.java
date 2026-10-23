@@ -26,6 +26,7 @@ import io.mdudel.zenoh.purejava.wire.Priority;
 import io.mdudel.zenoh.purejava.wire.Qos;
 import io.mdudel.zenoh.purejava.wire.Timestamp;
 import io.mdudel.zenoh.purejava.wire.ZenohId;
+import java.io.File;
 
 import java.io.IOException;
 import java.lang.System.Logger;
@@ -33,7 +34,6 @@ import java.lang.System.Logger.Level;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -81,6 +81,10 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
     private final char[]    keyStorePassword;
     private final boolean   verifyHostname;
     private final long      leaseMs;
+    private final int       handshakeTimeoutMs;
+    private final boolean   autoReconnect;
+    private final long      reconnectInitialDelayMs;
+    private final long      reconnectMaxDelayMs;
     // ----- optional per-publisher defaults for QoS / Timestamp / NodeId --
     // Any of these can be overridden per publish call via the extended
     // publish(...) overloads. All are opt-in: with builder defaults, the
@@ -97,19 +101,23 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
     private final AtomicLong lastSendMs = new AtomicLong(0);
 
     private PureJavaZenohPublisher(Builder b) {
-        this.connectEndpoint  = nz(b.connectEndpoint);
-        this.keyExpr          = (b.keyExpr != null && !b.keyExpr.isEmpty())
-                                    ? b.keyExpr : "demo/example/zenoh-java";
-        this.org              = nz(b.org);
-        this.rootCaCertPath   = nz(b.rootCaCertPath);
-        this.clientCertPath   = nz(b.clientCertPath);
-        this.clientKeyPath    = nz(b.clientKeyPath);
-        this.keyStorePassword = b.keyStorePassword;
-        this.verifyHostname   = b.verifyHostname;
-        this.leaseMs          = b.leaseMs;
-        this.defaultQos       = (b.defaultQos != null) ? b.defaultQos : Qos.DEFAULT;
-        this.autoTimestamp    = b.autoTimestamp;
-        this.defaultNodeId    = b.defaultNodeId;
+        this.connectEndpoint         = nz(b.connectEndpoint);
+        this.keyExpr                 = (b.keyExpr != null && !b.keyExpr.isEmpty())
+                                           ? b.keyExpr : "demo/example/zenoh-java";
+        this.org                     = nz(b.org);
+        this.rootCaCertPath          = nz(b.rootCaCertPath);
+        this.clientCertPath          = nz(b.clientCertPath);
+        this.clientKeyPath           = nz(b.clientKeyPath);
+        this.keyStorePassword        = b.keyStorePassword;
+        this.verifyHostname          = b.verifyHostname;
+        this.leaseMs                 = b.leaseMs;
+        this.handshakeTimeoutMs      = b.handshakeTimeoutMs;
+        this.autoReconnect           = b.autoReconnect;
+        this.reconnectInitialDelayMs = b.reconnectInitialDelayMs;
+        this.reconnectMaxDelayMs     = b.reconnectMaxDelayMs;
+        this.defaultQos              = (b.defaultQos != null) ? b.defaultQos : Qos.DEFAULT;
+        this.autoTimestamp           = b.autoTimestamp;
+        this.defaultNodeId           = b.defaultNodeId;
     }
 
     private static String nz(String s) { return s == null ? "" : s; }
@@ -121,6 +129,13 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
     public String  getEffectiveKeyExpr() { return KeyExpr.resolveKey(org, keyExpr); }
     public boolean isActive()            {
         return session != null && session.state() == SessionState.OPEN;
+    }
+    public boolean isReconnecting()      {
+        return session != null && session.state() == SessionState.RECONNECTING;
+    }
+    public long    getReconnectCount()   {
+        ZenohSession s = session;
+        return s == null ? 0L : s.reconnectCount();
     }
     public long    getSentCount()        { return sentCount.get(); }
     public long    getLastSendMs()       { return lastSendMs.get(); }
@@ -148,7 +163,11 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
         }
         ZenohSession s = ZenohSession.builder(t)
                 .leaseMs(leaseMs)
+                .handshakeTimeoutMs(handshakeTimeoutMs)
                 .autoConnect(true)
+                .autoReconnect(autoReconnect)
+                .reconnectInitialDelayMs(reconnectInitialDelayMs)
+                .reconnectMaxDelayMs(reconnectMaxDelayMs)
                 .build();
         try {
             s.open();
@@ -402,7 +421,7 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
     }
 
     private static Path requireReadable(String pathStr, String argName) throws IOException {
-        Path p = Paths.get(pathStr);
+        Path p = new File(pathStr).toPath();
         if (!Files.isReadable(p)) {
             throw new IOException(argName + " not readable: " + pathStr);
         }
@@ -435,18 +454,22 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
      * site.
      */
     public static final class Builder {
-        private String  connectEndpoint  = "";
+        private String  connectEndpoint         = "";
         private String  keyExpr;
-        private String  org              = "";
-        private String  rootCaCertPath   = "";
-        private String  clientCertPath   = "";
-        private String  clientKeyPath    = "";
-        private char[]  keyStorePassword = "changeit".toCharArray();
-        private boolean verifyHostname   = true;
-        private long    leaseMs          = ZenohSession.DEFAULT_LEASE_MS;
-        private Qos     defaultQos       = Qos.DEFAULT;
-        private boolean autoTimestamp    = false;
-        private long    defaultNodeId    = 0L;
+        private String  org                     = "";
+        private String  rootCaCertPath          = "";
+        private String  clientCertPath          = "";
+        private String  clientKeyPath           = "";
+        private char[]  keyStorePassword        = "changeit".toCharArray();
+        private boolean verifyHostname          = true;
+        private long    leaseMs                 = ZenohSession.DEFAULT_LEASE_MS;
+        private int     handshakeTimeoutMs      = ZenohSession.DEFAULT_HANDSHAKE_MS;
+        private boolean autoReconnect           = false;
+        private long    reconnectInitialDelayMs = ZenohSession.DEFAULT_RECONNECT_INITIAL_DELAY_MS;
+        private long    reconnectMaxDelayMs     = ZenohSession.DEFAULT_RECONNECT_MAX_DELAY_MS;
+        private Qos     defaultQos              = Qos.DEFAULT;
+        private boolean autoTimestamp           = false;
+        private long    defaultNodeId           = 0L;
 
         public Builder connectEndpoint(String v) { this.connectEndpoint = v; return this; }
         public Builder keyExpr(String v)         { this.keyExpr         = v; return this; }
@@ -457,6 +480,14 @@ public final class PureJavaZenohPublisher implements AutoCloseable {
         public Builder keyStorePassword(char[] v){ this.keyStorePassword = v; return this; }
         public Builder verifyHostname(boolean v) { this.verifyHostname  = v; return this; }
         public Builder leaseMs(long v)           { this.leaseMs         = v; return this; }
+
+        /** Per-step Zenoh handshake receive timeout (ms). Default {@link ZenohSession#DEFAULT_HANDSHAKE_MS}. */
+        public Builder handshakeTimeoutMs(int v) { this.handshakeTimeoutMs = v; return this; }
+
+        /** Enable automatic session reconnect with exponential backoff on unexpected disconnects. */
+        public Builder autoReconnect(boolean v) { this.autoReconnect = v; return this; }
+        public Builder reconnectInitialDelayMs(long v) { this.reconnectInitialDelayMs = v; return this; }
+        public Builder reconnectMaxDelayMs(long v) { this.reconnectMaxDelayMs = v; return this; }
 
         /**
          * Publisher-scope default QoS. Every {@link #publish(String, byte[])}
